@@ -160,15 +160,22 @@ jobs:
             msg=$( { echo "== fw $1: $2"; head -c 300 qemu-out/fw-$1.err; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-$1.txt | sed -E 's/\[[0-9;=?]*[A-Za-z]//g;s/   */ /g' | tail -n 14 | tail -c 1400; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=fw $1::$msg"
           }
-          SEC="-global driver=cfi.pflash01,property=secure,value=on"
-          fw q35-smm "-machine q35,smm=on -cpu max -m 1024 $SEC"
-          fw q35-smm-2g "-machine q35,smm=on -cpu max -m 2048 $SEC"
-          fw q35-smm-nosecure "-machine q35,smm=on -cpu max -m 1024"
-          fw pc-max "-machine pc -cpu max -m 1024"
+          # 32-bit firmware on the legacy "pc" machine (q35 crashes inside this OVMF build): watch the screen over time
+          cp /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/v-pc.fd
+          ( sleep 25; echo "screendump /tmp/s25.ppm"; sleep 35; echo "screendump /tmp/s60.ppm"; sleep 60; echo "screendump /tmp/s120.ppm"; sleep 3; echo quit ) | \
+          timeout 150 qemu-system-x86_64 -machine pc -cpu max -m 1024 -vga std -display none -serial file:qemu-out/fw-pc-long.txt -monitor stdio \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF32_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=/tmp/v-pc.fd \
+            -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0,bootindex=1 >qemu-out/fw-pc-long.err 2>&1 || true
+          for t in 25 60 120; do
+            convert /tmp/s$t.ppm /tmp/s$t.png 2>/dev/null
+            msg=$( { echo "== fw pc screen at ${t}s"; tesseract /tmp/s$t.png - 2>/dev/null | head -30; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=fwscreen $t::$msg"
+          done
+          echo "::notice title=fwserial::$(LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-pc-long.txt | tail -c 1500 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: "q35,smm=on", QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: pc, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
