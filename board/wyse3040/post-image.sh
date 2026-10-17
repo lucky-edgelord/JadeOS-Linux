@@ -8,5 +8,6 @@ UUID=$(dumpe2fs "$BINARIES_DIR/rootfs.ext2" 2>/dev/null | sed -n 's/^Filesystem 
 cp "$BOARD/grub.cfg" "$BINARIES_DIR/efi-part/EFI/BOOT/grub.cfg"
 sed -i "s/UUID_TMP/$UUID/g" "$BINARIES_DIR/efi-part/EFI/BOOT/grub.cfg"
 sed "s/UUID_TMP/$UUID/g" "$BOARD/genimage.cfg" > "$BINARIES_DIR/genimage.cfg"
+cp "$BUILD_DIR"/linux-*/.config "$BINARIES_DIR/kernel.config" 2>/dev/null || true   # for the CI logs
 support/scripts/genimage.sh -c "$BINARIES_DIR/genimage.cfg"
 ( cd "$BINARIES_DIR" && gzip -9 -k -f jadeos-wyse3040.img && sha256sum jadeos-wyse3040.img.gz > jadeos-wyse3040.img.gz.sha256 )

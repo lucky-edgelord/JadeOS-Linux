@@ -135,6 +135,19 @@ jobs:
           path: |
             output/images/jadeos-wyse3040.img.gz
             output/images/jadeos-wyse3040.img.gz.sha256
+      - name: Alternative 32-bit UEFI firmware (Debian's OVMF32 crashes on the q35 machine)
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/alt && cd /tmp/alt
+          base=https://www.kraxel.org/repos/jenkins/edk2/
+          curl -fsSL $base -o index.html || { echo "::notice title=alt firmware::no access to $base"; exit 0; }
+          f=$(grep -o 'edk2\.git-ovmf-ia32-[^"<>]*noarch\.rpm' index.html | sort -Vu | tail -1)
+          echo "rpm: $f"
+          [ -n "$f" ] && curl -fsSL "$base$f" -o ovmf.rpm && sudo apt-get install -y -qq rpm2cpio >/dev/null 2>&1; rpm2cpio ovmf.rpm | cpio -idm 2>&1 | tail -2
+          find . -name '*.fd' | head
+          C=$(find $PWD -name 'OVMF_CODE*.fd' | head -1); V=$(find $PWD -name 'OVMF_VARS*.fd' | head -1)
+          echo "::notice title=alt firmware::rpm=$f code=$C vars=$V"
+          if [ -n "$C" ] && [ -n "$V" ]; then echo "FW_CODE=$C" >> $GITHUB_ENV; echo "FW_VARS=$V" >> $GITHUB_ENV; echo "QEMU_MACHINE_IA32=q35" >> $GITHUB_ENV; fi
       - name: Direct kernel boot (diagnostic, no firmware or bootloader involved)
         continue-on-error: true
         run: |
@@ -175,7 +188,7 @@ jobs:
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: pc, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: "${{ env.QEMU_MACHINE_IA32 || 'pc' }}", QEMU_ENTRY: debug, BOOT_WAIT: "90" }
         run: |
           mkdir -p qemu-out
           set -o pipefail

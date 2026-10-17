@@ -4,6 +4,13 @@
 case "$1" in
   start)
     DEV=$(findfs LABEL=jadedata 2>/dev/null)
+    [ -n "$DEV" ] || DEV=$(blkid 2>/dev/null | sed -n 's|^\(/dev/[^:]*\):.*LABEL="jadedata".*|\1|p' | head -n1)
+    if [ -z "$DEV" ]; then   # last resort: read the ext4 label straight from the superblock
+      for sys in /sys/class/block/*/partition; do
+        n=$(basename "$(dirname "$sys")")
+        [ "$(dd if=/dev/$n bs=1 skip=1144 count=8 2>/dev/null)" = "jadedata" ] && DEV=/dev/$n && break
+      done
+    fi
     if [ -n "$DEV" ]; then
       grown=0
       if mount -o ro "$DEV" /data 2>/dev/null; then [ -e /data/.grown ] && grown=1; umount /data; fi
