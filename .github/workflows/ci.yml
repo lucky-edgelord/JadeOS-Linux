@@ -167,7 +167,7 @@ jobs:
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: pc, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -192,6 +192,11 @@ jobs:
             [ -f $f ] || continue
             msg=$(tesseract $f - 2>/dev/null | tail -n 40 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=screen $f::$msg"
+          done
+          for f in qemu-out/diag-*.txt; do
+            [ -f $f ] || continue
+            msg=$(LC_ALL=C tr -cd '\n\11\40-\176' < $f | cut -c1-220 | tail -c 9000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=diag $f::$msg"
           done
           for d in qemu-out/run-*; do
             [ -f $d/serial.log ] || continue

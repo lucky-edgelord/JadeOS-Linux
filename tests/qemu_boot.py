@@ -26,7 +26,7 @@ disk = os.path.join(work, "disk.img"); shutil.copy(img, disk)
 subprocess.run(["truncate", "-s", "4G", disk], check=True)
 vv = os.path.join(work, "vars.fd"); shutil.copy(vars_, vv)
 sock = os.path.join(work, "serial.sock"); mon = os.path.join(work, "mon.sock")
-cmd = ["qemu-system-x86_64", "-machine", "q35", "-cpu", os.environ.get("QEMU_CPU", "Nehalem"), "-m", os.environ.get("QEMU_MEM", "2048"), "-smp", "2", "-display", "none", "-vga", "std",
+cmd = ["qemu-system-x86_64", "-machine", os.environ.get("QEMU_MACHINE", "q35"), "-cpu", os.environ.get("QEMU_CPU", "Nehalem"), "-m", os.environ.get("QEMU_MEM", "2048"), "-smp", "2", "-display", "none", "-vga", "std",
        "-drive", f"if=pflash,format=raw,readonly=on,file={code}", "-drive", f"if=pflash,format=raw,file={vv}",
        "-drive", f"file={disk},format=raw,if=none,id=d0", "-device", "ide-hd,drive=d0,bootindex=1" if False else "virtio-blk-pci,drive=d0,bootindex=1",
        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
@@ -115,7 +115,7 @@ try:
         t = tok.group(1)
         c, o = sh("wget -qO- --header='X-Jaded-Token: %s' http://127.0.0.1:8080/native/ping" % t); ok('"name":"jaded"' in o, "jaded answers the API: " + o.strip()[:100])
         c, o = sh("wget -qO- http://127.0.0.1:8080/native/ping 2>&1 | tail -1"); ok("401" in o or "Unauthorized" in o, "and refuses calls without the token")
-    c, o = sh("pgrep -f 'jaded.mjs' >/dev/null && echo node-running; pgrep cog >/dev/null && echo cog-running"); ok("node-running" in o, "jaded is running")
+    c, o = sh("ps w | grep -q '[j]aded.mjs' && echo node-running; ps w | grep -q '[c]og' && echo cog-running"); ok("node-running" in o, "jaded is running")
     ok("cog-running" in o, "the kiosk browser (Cog) is running")
     time.sleep(20)
     r = mon_cmd(f"screendump {os.path.join(work, 'screen.ppm')}")
@@ -131,6 +131,13 @@ try:
     else:
         ok(False, "screendump produced a file")
     c, o = sh("tail -5 /var/log/cog.log /var/log/jaded.log 2>&1 | head -20"); print(o)
+    diag = open(os.path.join(out, f"diag-{fw}.txt"), "w")
+    for cmd in ["cat /proc/partitions", "blkid 2>&1 | head", "findfs LABEL=jadedata 2>&1", "sgdisk -p /dev/vda 2>&1 | tail -6",
+                "ls -l /dev/dri 2>&1", "dmesg | grep -i -E 'drm|bochs|simpledrm|efifb|fb0|virtio_gpu' | head -12",
+                "ls /usr/lib | grep -i -E 'wpe|cog|gbm|EGL|GLES|libGL' | head -20", "ls /usr/lib/cog /usr/lib/wpe* /usr/lib/dri 2>&1 | head -20",
+                "ls /usr/share/glvnd /usr/share/egl 2>&1 | head", "head -40 /var/log/cog.log", "head -20 /var/log/jaded.log", "cat /proc/cmdline; free -m | head -2",
+                "pkill cog; sleep 1; G_MESSAGES_DEBUG=all timeout 15 cog --platform=drm http://127.0.0.1:8080/ 2>&1 | head -40"]:
+        c, o = sh(cmd, 40); diag.write("$ " + cmd + "\n" + re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", o) + "\n"); diag.flush()
 finally:
     try: mon_cmd("quit")
     except Exception: pass
