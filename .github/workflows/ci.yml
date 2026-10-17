@@ -56,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential libncurses-dev unzip bc cpio rsync file wget python3 perl libssl-dev libelf-dev \
-            qemu-system-x86 ovmf ovmf-ia32 imagemagick ccache
+            qemu-system-x86 ovmf ovmf-ia32 imagemagick ccache tesseract-ocr
       - name: Jade Vault page
         if: steps.img.outputs.cache-hit != 'true'
         run: tools/fetch_page.sh
@@ -138,7 +138,7 @@ jobs:
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_ENTRY: verbose }
+        env: { QEMU_MEM: "1024", QEMU_ENTRY: debug, BOOT_WAIT: "240" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -146,7 +146,7 @@ jobs:
       - name: Boot test, 64-bit UEFI
         id: boot64
         continue-on-error: true
-        env: { QEMU_ENTRY: verbose }
+        env: { QEMU_ENTRY: debug, BOOT_WAIT: "240" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -156,12 +156,17 @@ jobs:
         run: |
           for f in qemu-out/test-ia32.txt qemu-out/test-x64.txt; do
             [ -f $f ] || continue
-            msg=$(tail -n 40 $f | head -c 3000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            msg=$(LC_ALL=C tr -cd '\n\11\40-\176' < $f | sed 's/   */ /g' | tail -n 60 | tail -c 5000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=$f::$msg"
+          done
+          for f in qemu-out/fail-*.png; do
+            [ -f $f ] || continue
+            msg=$(tesseract $f - 2>/dev/null | tail -n 40 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=screen $f::$msg"
           done
           for d in qemu-out/run-*; do
             [ -f $d/serial.log ] || continue
-            msg=$(tail -c 12000 $d/serial.log | sed -E 's/\x1b\[[0-9;=?]*[A-Za-z]//g' | tr -d '\033' | tail -n 70 | tail -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            msg=$(tail -c 12000 $d/serial.log | LC_ALL=C tr -cd '\n\11\40-\176' | sed -E 's/\[[0-9;=?]*[A-Za-z]//g;s/   */ /g' | tail -n 70 | tail -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=serial $d::$msg"
           done
       - name: Publish logs (branch ci-results)

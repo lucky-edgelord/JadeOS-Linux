@@ -86,9 +86,17 @@ try:
     if os.environ.get("QEMU_ENTRY") == "verbose":
         if read_until(r"GNU GRUB", 120):
             time.sleep(1); s.sendall(b"\x1b[B"); time.sleep(0.5); s.sendall(b"\r")
-    boot = read_until(r"jadeos login:", 420)
+    if os.environ.get("QEMU_ENTRY") == "debug":
+        # edit the first entry in GRUB: add early serial console and full kernel messages
+        if read_until(r"GNU GRUB", 120):
+            time.sleep(1); s.sendall(b"e"); time.sleep(1.5)
+            s.sendall(b"\x05 earlycon=uart8250,io,0x3f8,115200 ignore_loglevel debug jade.nokiosk=0"); time.sleep(0.5)
+            s.sendall(b"\x18")
+    boot = read_until(r"jadeos login:", int(os.environ.get("BOOT_WAIT", "300")))
     ok(boot is not None, f"[{fw}] the system boots to a login prompt")
     if boot is None:
+        try: mon_cmd(f"screendump {os.path.join(work, 'fail.ppm')}"); subprocess.run(["convert", os.path.join(work, "fail.ppm"), os.path.join(out, f"fail-{fw}.png")], check=False)
+        except Exception as e: print("screendump failed", e)
         print(re.sub(r"\x1b\[[0-9;=?]*[A-Za-z]", "", buf)[-3500:]); raise SystemExit(1)
     ok("jaded started" in logf.name or True, "serial console works")
     s.sendall(b"root\n"); time.sleep(2)
