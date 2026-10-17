@@ -138,11 +138,30 @@ jobs:
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        run: python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img ia32 qemu-out
+        run: |
+          mkdir -p qemu-out
+          set -o pipefail
+          python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img ia32 qemu-out 2>&1 | tee qemu-out/test-ia32.txt
       - name: Boot test, 64-bit UEFI
         id: boot64
         continue-on-error: true
-        run: python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img x64 qemu-out
+        run: |
+          mkdir -p qemu-out
+          set -o pipefail
+          python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img x64 qemu-out 2>&1 | tee qemu-out/test-x64.txt
+      - name: Show boot logs as annotations (job logs are not readable from outside)
+        if: always()
+        run: |
+          for f in qemu-out/test-ia32.txt qemu-out/test-x64.txt; do
+            [ -f $f ] || continue
+            msg=$(tail -n 40 $f | head -c 3000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=$f::$msg"
+          done
+          for d in qemu-out/run-*; do
+            [ -f $d/serial.log ] || continue
+            msg=$(tail -n 60 $d/serial.log | tr -d '\033' | head -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=serial $d::$msg"
+          done
       - name: Publish logs (branch ci-results)
         if: always()
         run: |
@@ -153,7 +172,7 @@ jobs:
           find /tmp/res -name '*.ppm' -size +1M -delete 2>/dev/null || true
           cd /tmp/res && git init -q && git checkout -q -b ci-results && git add -A
           git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci results for $GITHUB_SHA" || true
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-results || true
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-results 2>&1 | sed 's/x-access-token:[^@]*@//' || true
       - name: Boot test results
         if: always()
         uses: actions/upload-artifact@v4
