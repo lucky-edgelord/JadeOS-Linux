@@ -97,6 +97,15 @@ jobs:
           name: build-log
           path: build.log
           if-no-files-found: ignore
+      - name: Publish the build log tail (branch ci-results)
+        if: always()
+        run: |
+          mkdir -p /tmp/res
+          { echo "run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT sha $GITHUB_SHA"; echo; echo "== first errors =="; grep -n -m6 -B3 -A12 -E '\*\*\* |Error [0-9]+|error:|FAILED' build.log || true; echo; echo "== last 120 lines =="; tail -n 120 build.log; } > /tmp/res/build-tail.txt 2>/dev/null || true
+          cp -r qemu-out /tmp/res/ 2>/dev/null || true
+          cd /tmp/res && git init -q && git checkout -q -b ci-results && git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci results for $GITHUB_SHA" || true
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-results || true
       - name: Not finished
         if: steps.build.outcome == 'failure'
         run: |
