@@ -26,7 +26,7 @@ disk = os.path.join(work, "disk.img"); shutil.copy(img, disk)
 subprocess.run(["truncate", "-s", "4G", disk], check=True)
 vv = os.path.join(work, "vars.fd"); shutil.copy(vars_, vv)
 sock = os.path.join(work, "serial.sock"); mon = os.path.join(work, "mon.sock")
-cmd = ["qemu-system-x86_64", "-machine", "q35", "-cpu", "Nehalem", "-m", "2048", "-smp", "2", "-display", "none", "-vga", "std",
+cmd = ["qemu-system-x86_64", "-machine", "q35", "-cpu", os.environ.get("QEMU_CPU", "Nehalem"), "-m", os.environ.get("QEMU_MEM", "2048"), "-smp", "2", "-display", "none", "-vga", "std",
        "-drive", f"if=pflash,format=raw,readonly=on,file={code}", "-drive", f"if=pflash,format=raw,file={vv}",
        "-drive", f"file={disk},format=raw,if=none,id=d0", "-device", "ide-hd,drive=d0,bootindex=1" if False else "virtio-blk-pci,drive=d0,bootindex=1",
        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
@@ -58,6 +58,8 @@ def read_until(pat, timeout):
                 buf += d; logf.write(d); logf.flush()
         except socket.timeout:
             pass
+        if re.search(r"IA32 Exception|X64 Exception|Kernel panic", buf):
+            return None
         m = re.search(pat, buf)
         if m:
             r = buf[:m.end()]; buf = buf[m.end():]; return r
@@ -81,10 +83,13 @@ def mon_cmd(c):
         m.close()
 
 try:
+    if os.environ.get("QEMU_ENTRY") == "verbose":
+        if read_until(r"GNU GRUB", 120):
+            time.sleep(1); s.sendall(b"\x1b[B"); time.sleep(0.5); s.sendall(b"\r")
     boot = read_until(r"jadeos login:", 420)
     ok(boot is not None, f"[{fw}] the system boots to a login prompt")
     if boot is None:
-        print(buf[-3000:]); raise SystemExit(1)
+        print(re.sub(r"\x1b\[[0-9;=?]*[A-Za-z]", "", buf)[-3500:]); raise SystemExit(1)
     ok("jaded started" in logf.name or True, "serial console works")
     s.sendall(b"root\n"); time.sleep(2)
     c, o = sh("echo up"); ok(c == 0 and "up" in o, "console login (root)")

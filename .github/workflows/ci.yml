@@ -138,6 +138,7 @@ jobs:
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
+        env: { QEMU_MEM: "1024", QEMU_ENTRY: verbose }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -145,6 +146,7 @@ jobs:
       - name: Boot test, 64-bit UEFI
         id: boot64
         continue-on-error: true
+        env: { QEMU_ENTRY: verbose }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -159,7 +161,7 @@ jobs:
           done
           for d in qemu-out/run-*; do
             [ -f $d/serial.log ] || continue
-            msg=$(tail -n 60 $d/serial.log | tr -d '\033' | head -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            msg=$(tail -c 12000 $d/serial.log | sed -E 's/\x1b\[[0-9;=?]*[A-Za-z]//g' | tr -d '\033' | tail -n 70 | tail -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=serial $d::$msg"
           done
       - name: Publish logs (branch ci-results)
