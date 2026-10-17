@@ -79,7 +79,10 @@ jobs:
         continue-on-error: true
         run: |
           cd output
-          timeout 21000 make -C ../../buildroot O=$PWD BR2_EXTERNAL=$GITHUB_WORKSPACE -j"$(nproc)" > ../build.log 2>&1 || true
+          set +e
+          timeout 21000 make -C ../../buildroot O=$PWD BR2_EXTERNAL=$GITHUB_WORKSPACE -j"$(nproc)" > ../build.log 2>&1
+          echo "make exit code: $?" | tee ../make.rc
+          df -h / > ../disk.txt; free -m > ../mem.txt; sudo dmesg 2>/dev/null | grep -i -E "out of memory|oom|killed process" | tail -5 > ../oom.txt
           tail -n 40 ../build.log
           test -f images/jadeos-wyse3040.img.gz
       - name: Save caches
@@ -101,7 +104,7 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/res
-          { echo "run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT sha $GITHUB_SHA"; echo; echo "== first errors =="; grep -n -m6 -B3 -A12 -E '\*\*\* |Error [0-9]+|error:|FAILED' build.log || true; echo; echo "== last 120 lines =="; tail -n 120 build.log; } > /tmp/res/build-tail.txt 2>/dev/null || true
+          { echo "run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT sha $GITHUB_SHA"; cat make.rc disk.txt mem.txt oom.txt 2>/dev/null; echo; echo "== make errors =="; grep -n -E '^make(\[[0-9]+\])?: \*\*\*|^>>> |Killed|Segmentation|No space left|Cannot allocate' build.log | tail -20; echo "== first errors =="; grep -n -m6 -B3 -A12 -E '\*\*\* |Error [0-9]+|error:|FAILED' build.log || true; echo; echo "== last 120 lines =="; tail -n 120 build.log; } > /tmp/res/build-tail.txt 2>/dev/null || true
           cp -r qemu-out /tmp/res/ 2>/dev/null || true
           cd /tmp/res && git init -q && git checkout -q -b ci-results && git add -A
           git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci results for $GITHUB_SHA" || true
