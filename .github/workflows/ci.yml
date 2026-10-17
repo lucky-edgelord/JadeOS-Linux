@@ -135,10 +135,23 @@ jobs:
           path: |
             output/images/jadeos-wyse3040.img.gz
             output/images/jadeos-wyse3040.img.gz.sha256
+      - name: Direct kernel boot (diagnostic, no firmware or bootloader involved)
+        continue-on-error: true
+        run: |
+          ls -la output/images/ /dev/kvm 2>&1 | head -20
+          file output/images/bzImage || true
+          mkdir -p qemu-out
+          timeout 120 qemu-system-x86_64 -machine q35 -cpu Nehalem -m 1024 -nographic -no-reboot \
+            -kernel output/images/bzImage -append "console=ttyS0 earlycon=uart8250,io,0x3f8 ignore_loglevel root=/dev/vda3 rootwait ro jade.nokiosk=1 panic=-1" \
+            -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0 \
+            > qemu-out/direct.txt 2>&1 || true
+          { echo "kvm: $(ls /dev/kvm 2>&1)"; ls -la output/images | head; file output/images/bzImage 2>&1; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/direct.txt | tail -n 60 | tail -c 6000; } > qemu-out/direct-clean.txt
+          msg=$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' qemu-out/direct-clean.txt)
+          echo "::notice title=direct kernel boot::$msg"
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_ENTRY: debug, BOOT_WAIT: "240" }
+        env: { QEMU_MEM: "1024", QEMU_ENTRY: debug, BOOT_WAIT: "150" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
@@ -146,7 +159,7 @@ jobs:
       - name: Boot test, 64-bit UEFI
         id: boot64
         continue-on-error: true
-        env: { QEMU_ENTRY: debug, BOOT_WAIT: "240" }
+        env: { QEMU_ENTRY: debug, BOOT_WAIT: "150" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
