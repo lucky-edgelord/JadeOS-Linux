@@ -31,6 +31,8 @@ cmd = ["qemu-system-x86_64", "-machine", os.environ.get("QEMU_MACHINE", "q35"), 
        "-drive", f"file={disk},format=raw,if=none,id=d0", "-device", "ide-hd,drive=d0,bootindex=1" if False else "virtio-blk-pci,drive=d0,bootindex=1",
        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
        "-serial", f"unix:{sock},server=on,wait=off", "-monitor", f"unix:{mon},server=on,wait=off"]
+if fw == "ia32" and os.environ.get("QEMU_MACHINE", "q35").startswith("q35"):
+    cmd += ["-global", "driver=cfi.pflash01,property=secure,value=on"]   # the 32-bit OVMF is a Secure Boot/SMM build
 if os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.W_OK):
     cmd += ["-enable-kvm"]
 q = subprocess.Popen(cmd, stdout=open(os.path.join(work, "qemu.log"), "w"), stderr=subprocess.STDOUT)

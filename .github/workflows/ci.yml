@@ -151,23 +151,24 @@ jobs:
           run westmere "-cpu Westmere" ""
           run sandybridge "-cpu SandyBridge" ""
           run silvermont-like "-cpu Haswell,-avx,-avx2,-bmi1,-bmi2,-fma,-abm" ""
-          # 32-bit UEFI firmware alone (no disk): which machine/cpu/memory does it survive?
+          # 32-bit UEFI firmware (a Secure-Boot/SMM build): which machine setup does it survive, with the disk attached?
           fw() { # name, args
             cp /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/v-$1.fd
-            timeout 40 qemu-system-x86_64 $2 -display none -serial file:qemu-out/fw-$1.txt -monitor none \
-              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF32_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=/tmp/v-$1.fd >/dev/null 2>&1 || true
-            msg=$( { echo "== fw $1: $2"; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-$1.txt | sed -E 's/\[[0-9;=?]*[A-Za-z]//g' | tail -n 12 | tail -c 1200; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            timeout 60 qemu-system-x86_64 $2 -display none -serial file:qemu-out/fw-$1.txt -monitor none \
+              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF32_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=/tmp/v-$1.fd \
+              -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0,bootindex=1 >qemu-out/fw-$1.err 2>&1 || true
+            msg=$( { echo "== fw $1: $2"; head -c 300 qemu-out/fw-$1.err; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-$1.txt | sed -E 's/\[[0-9;=?]*[A-Za-z]//g;s/   */ /g' | tail -n 14 | tail -c 1400; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::notice title=fw $1::$msg"
           }
-          fw q35-max "-machine q35 -cpu max -m 1024"
-          fw q35-nehalem-2g "-machine q35 -cpu Nehalem -m 2048"
+          SEC="-global driver=cfi.pflash01,property=secure,value=on"
+          fw q35-smm "-machine q35,smm=on -cpu max -m 1024 $SEC"
+          fw q35-smm-2g "-machine q35,smm=on -cpu max -m 2048 $SEC"
+          fw q35-smm-nosecure "-machine q35,smm=on -cpu max -m 1024"
           fw pc-max "-machine pc -cpu max -m 1024"
-          fw pc-qemu32 "-machine pc -cpu qemu32 -m 512"
-          fw q35-max-256 "-machine q35 -cpu max -m 256"
       - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
         id: boot32
         continue-on-error: true
-        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: pc, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: "q35,smm=on", QEMU_ENTRY: debug, BOOT_WAIT: "90" }
         run: |
           mkdir -p qemu-out
           set -o pipefail
