@@ -1,0 +1,13 @@
+#!/bin/sh
+# Wi-Fi from /data/etc/wpa_supplicant.conf (made by `jade-wifi SSID PASSWORD`), DHCP on wlan0
+case "$1" in
+  start)
+    [ -f /data/etc/wpa_supplicant.conf ] || exit 0
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /sys/class/net/wlan0 ] && break; sleep 1; done
+    [ -d /sys/class/net/wlan0 ] || { echo "wifi: no wlan0"; exit 0; }
+    ifconfig wlan0 up
+    wpa_supplicant -B -i wlan0 -c /data/etc/wpa_supplicant.conf -P /run/wpa_supplicant.pid
+    udhcpc -b -i wlan0 -p /run/udhcpc.wlan0.pid -x hostname:jadeos
+    ;;
+  stop) [ -f /run/wpa_supplicant.pid ] && kill "$(cat /run/wpa_supplicant.pid)" ;;
+esac

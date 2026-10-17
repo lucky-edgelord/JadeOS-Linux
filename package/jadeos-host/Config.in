@@ -1,0 +1,7 @@
+config BR2_PACKAGE_JADEOS_HOST
+	bool "jadeos-host"
+	depends on BR2_PACKAGE_NODEJS
+	help
+	  jaded (the native host daemon) and the Jade Vault page it serves.
+	  Needs a built Jade Vault checkout (dist/jade-vault.html): set
+	  JADEOS_HOST_OVERRIDE_SRCDIR in local.mk, as scripts/build.sh does.

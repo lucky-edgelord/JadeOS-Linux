@@ -1,0 +1,9 @@
+#!/bin/sh
+# /var is RAM: the root filesystem is read-only
+case "$1" in
+  start)
+    mkdir -p /var/log /var/tmp /var/lib/misc /var/cache /var/spool /var/lock
+    chmod 1777 /var/tmp
+    ln -sfn ../run /var/run
+    ;;
+esac

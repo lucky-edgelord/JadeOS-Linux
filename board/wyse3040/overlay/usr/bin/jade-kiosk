@@ -1,0 +1,10 @@
+#!/bin/sh
+# keep Cog running full screen on the first display, restarting it if it ever exits
+export XDG_RUNTIME_DIR=/run/cog HOME=/tmp/cog
+mkdir -p "$XDG_RUNTIME_DIR" "$HOME"; chmod 700 "$XDG_RUNTIME_DIR"
+for i in $(seq 1 60); do [ -e /dev/dri/card0 ] && break; sleep 1; done
+for i in $(seq 1 60); do wget -q -O /dev/null http://127.0.0.1:8080/favicon.ico && break; sleep 1; done
+while :; do
+  cog --platform=drm "${JADE_URL:-http://127.0.0.1:8080/}" >>/var/log/cog.log 2>&1
+  sleep 2
+done

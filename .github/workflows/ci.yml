@@ -1,0 +1,130 @@
+name: ci
+
+# 1) quick: the native-host daemon and page, tested in headless Chromium against the real shell
+# 2) the Buildroot image for the Dell Wyse 3040 (hours; ccache + the download cache make a re-run fast), booted in QEMU
+#    with 32-bit and 64-bit UEFI firmware, then published as an artifact (and a release on tags / manual runs)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "publish a GitHub release with the image"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  BUILDROOT_REF: 2025.02.6
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: tools/fetch_page.sh
+      - run: node tests/jaded_test.mjs
+      - run: node tests/native_test.mjs
+
+  image:
+    needs: host
+    runs-on: ubuntu-latest
+    timeout-minutes: 400
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+      - name: Build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libncurses-dev unzip bc cpio rsync file wget python3 perl libssl-dev libelf-dev \
+            qemu-system-x86 ovmf ovmf-ia32 imagemagick ccache
+      - name: Jade Vault page
+        run: tools/fetch_page.sh
+      - name: Buildroot
+        run: git clone --depth 1 -b $BUILDROOT_REF https://github.com/buildroot/buildroot ../buildroot
+      - name: Restore caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BUILDROOT_REF }}-${{ hashFiles('configs/wyse3040_defconfig') }}-${{ github.run_id }}
+          restore-keys: |
+            br-${{ env.BUILDROOT_REF }}-${{ hashFiles('configs/wyse3040_defconfig') }}-
+            br-${{ env.BUILDROOT_REF }}-
+      - name: Configure
+        run: |
+          mkdir -p ~/.buildroot-dl ~/.buildroot-ccache
+          cd ../buildroot
+          make BR2_EXTERNAL=$GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/output wyse3040_defconfig
+          {
+            echo "BR2_DL_DIR=\"$HOME/.buildroot-dl\""
+            echo "BR2_CCACHE=y"
+            echo "BR2_CCACHE_DIR=\"$HOME/.buildroot-ccache\""
+          } >> $GITHUB_WORKSPACE/output/.config
+          make O=$GITHUB_WORKSPACE/output olddefconfig
+      - name: Build (stops itself before the job limit; re-run to continue from the cache)
+        id: build
+        continue-on-error: true
+        run: |
+          cd output
+          timeout 21000 make -C ../../buildroot O=$PWD BR2_EXTERNAL=$GITHUB_WORKSPACE -j"$(nproc)" > ../build.log 2>&1 || true
+          tail -n 40 ../build.log
+          test -f images/jadeos-wyse3040.img.gz
+      - name: Save caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BUILDROOT_REF }}-${{ hashFiles('configs/wyse3040_defconfig') }}-${{ github.run_id }}
+      - name: Build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+      - name: Not finished
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error::the image is not finished (time limit or a build error, see build-log). Re-run the job: ccache and the download cache resume it."
+          exit 1
+      - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
+        run: python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img ia32 qemu-out
+      - name: Boot test, 64-bit UEFI
+        run: python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img x64 qemu-out
+      - name: Boot test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-boot
+          path: qemu-out
+          if-no-files-found: ignore
+      - name: Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: jadeos-wyse3040
+          path: |
+            output/images/jadeos-wyse3040.img.gz
+            output/images/jadeos-wyse3040.img.gz.sha256
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
+          files: |
+            output/images/jadeos-wyse3040.img.gz
+            output/images/jadeos-wyse3040.img.gz.sha256
