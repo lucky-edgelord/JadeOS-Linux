@@ -5,6 +5,8 @@ import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os'
 import { start } from '../native/jaded.mjs';
 const { chromium } = pw;
 const log = [], fail = []; const ok = (c, m) => (c ? log : fail).push((c ? 'PASS ' : 'FAIL ') + m);
+const fakeLog = path.join(os.tmpdir(), 'fake-tts-n-' + process.pid + '.log'); fs.writeFileSync(fakeLog, '');
+process.env.FAKE_LOG = fakeLog; process.env.PATH = path.resolve('tests/fake') + ':' + process.env.PATH; process.env.FAKE_PLAY = '0.5';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jaded-ws-'));
 const d = await start({ port: 0, root, page: process.env.NATIVE_PAGE || 'build/native-page.html', token: 'native-tok' });
 const browser = await chromium.launch();
@@ -66,6 +68,19 @@ r = await sh('search tomatoes'); ok(/Garden/.test(r.out), '`search` works from t
 r = await sh('jade nope'); ok(r.code !== 0, 'jade errors carry a status');
 r = await sh('crontab -l'); ok(r.code === 0, 'crontab works from the real shell');
 r = await sh(`node -e "console.log(JSON.stringify(process.env.JADED_URL.startsWith('http://127.0.0.1')))"`); ok(r.out.trim() === 'true', 'scripts can find the host');
+
+
+// ---- speech: the page's speechSynthesis is backed by the machine's engine
+ok(await page.evaluate(() => window.__jadeNativeTTS === true && speechSynthesis.getVoices().length > 0 && speechSynthesis.getVoices()[0].default), 'speechSynthesis is provided, with voices');
+{
+  const ev = await page.evaluate(() => new Promise(res => { const e = []; const u = new SpeechSynthesisUtterance('Hello from the page.'); u.rate = 1.1; u.onstart = () => e.push('start'); u.onboundary = () => { if (!e.includes('boundary')) e.push('boundary'); }; u.onend = () => { e.push('end'); res(e); }; u.onerror = x => res(['error:' + x.error]); speechSynthesis.speak(u); }));
+  ok(ev[0] === 'start' && ev.at(-1) === 'end', 'an utterance starts and ends: ' + ev);
+  ok(/aplay .*\.wav/.test(fs.readFileSync(fakeLog, 'utf8')) && /flite .*Hello from the page\./.test(fs.readFileSync(fakeLog, 'utf8')), 'and the machine synthesised and played it');
+  const c = await page.evaluate(() => new Promise(res => { const u = new SpeechSynthesisUtterance('Cancel me.'); u.onerror = x => res(x.error); u.onend = () => res('ended'); speechSynthesis.speak(u); setTimeout(() => speechSynthesis.cancel(), 120); }));
+  ok(c === 'canceled', 'cancel() stops it: ' + c);
+  const two = await page.evaluate(() => new Promise(res => { const o = []; for (const t of ['one', 'two']) { const u = new SpeechSynthesisUtterance(t); u.onend = () => { o.push(t); if (o.length === 2) res(o); }; speechSynthesis.speak(u); } }));
+  ok(two.join() === 'one,two', 'utterances play one after the other: ' + two);
+}
 
 // ---- the host does not answer strangers
 const open = await page.evaluate(async () => { const a = await fetch('/exec', { method: 'POST', body: '{"cmd":"id"}' }); const b = await fetch('/fs/read?p=/Welcome.md'); return [a.status, b.status]; });

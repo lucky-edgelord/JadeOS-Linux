@@ -1,0 +1,12 @@
+#!/bin/sh
+# Sound cards come up muted: unmute and set a sensible level on whatever the codec calls its controls.
+case "$1" in
+  start)
+    [ -d /proc/asound ] || exit 0
+    for c in $(seq 0 3); do
+      [ -e /proc/asound/card$c ] || continue
+      for ctl in Master Speaker Headphone PCM Front "Line Out" HDMI; do amixer -q -c $c sset "$ctl" 85% unmute 2>/dev/null; done
+      amixer -q -c $c sset "Auto-Mute Mode" Disabled 2>/dev/null
+    done
+    ;;
+esac

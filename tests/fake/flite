@@ -1,0 +1,5 @@
+#!/bin/sh
+# stand-in for flite in the tests: records its arguments and writes a small WAV-looking file to the -o target
+echo "flite $*" >> "${FAKE_LOG:-/dev/null}"
+out=; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; esac; shift; done
+printf 'RIFF\044\000\000\000WAVEfmt \020\000\000\000\001\000\001\000\200\076\000\000\000\175\000\000\002\000\020\000data\000\000\000\000' > "$out"

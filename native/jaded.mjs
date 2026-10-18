@@ -104,6 +104,79 @@ export function start(opt = {}) {
     p.on('error', e => { line({ t: 'e', s: `jaded: ${e.message}\n` }); line({ t: 'x', code: 127 }); res.end(); });
   }
 
+
+  // ---- speech: Kokoro (neural, offline) when it is installed, else Flite; the audio is played through ALSA (aplay)
+  const KOKORO_DIR = opt.kokoroDir ?? process.env.KOKORO_DIR ?? '/opt/kokoro';
+  const KMODEL = path.join(KOKORO_DIR, 'models', 'onnx-community', 'Kokoro-82M-v1.0-ONNX');
+  const hasCmd = c => spawnSync('sh', ['-c', `command -v ${c} >/dev/null`]).status === 0;
+  const ENGINES = { kokoro: fs.existsSync(path.join(KOKORO_DIR, 'ready')), flite: hasCmd('flite') };
+  const wantEngine = opt.tts ?? process.env.JADED_TTS ?? 'auto';
+  const ENGINE = wantEngine === 'auto' ? (ENGINES.kokoro ? 'kokoro' : ENGINES.flite ? 'flite' : 'none') : (ENGINES[wantEngine] ? wantEngine : 'none');
+  const PLAYER = (opt.ttsPlayer ?? process.env.JADED_TTS_PLAYER ?? 'aplay -q').split(/\s+/).filter(Boolean);
+  const FLITE_VOICES = ['slt', 'rms', 'awb', 'kal16'];
+  const kokoroVoices = () => { try { return fs.readdirSync(path.join(KMODEL, 'voices')).filter(f => f.endsWith('.bin')).map(f => f.slice(0, -4)).sort(); } catch { return []; } };
+  const voiceInfo = (engine, id) => {
+    if (engine === 'flite') return { id, name: 'Flite ' + id.toUpperCase(), lang: 'en-US' };
+    const m = /^([ab])([fm])_(\w+)$/.exec(id); const nm = m ? m[3][0].toUpperCase() + m[3].slice(1) : id;
+    return { id, name: `Kokoro ${nm}${m ? ` (${m[1] === 'a' ? 'US' : 'UK'}, ${m[2] === 'f' ? 'female' : 'male'})` : ''}`, lang: m && m[1] === 'b' ? 'en-GB' : 'en-US' };
+  };
+  const voicesFor = engine => engine === 'kokoro'
+    ? (() => { const v = kokoroVoices(); v.sort((a, b) => (b === 'af_heart') - (a === 'af_heart')); return v.map(id => voiceInfo('kokoro', id)); })()
+    : engine === 'flite' ? FLITE_VOICES.map(id => voiceInfo('flite', id)) : [];
+  const TTS_INFO = { engine: ENGINE, engines: Object.keys(ENGINES).filter(k => ENGINES[k]), voices: voicesFor(ENGINE) };
+  let TTS_JS = ''; try { TTS_JS = fs.readFileSync(path.join(HERE, 'native_tts.js'), 'utf8'); } catch {}
+
+  let kw = null, kwSeq = 0, kwIdle = null; const kwWait = new Map();
+  function kokoroWorker() {
+    if (kw) return kw;
+    const w = spawn(process.execPath, [path.join(KOKORO_DIR, 'kokoro_worker.mjs')], { cwd: KOKORO_DIR, env: { ...process.env, KOKORO_DIR }, stdio: ['pipe', 'pipe', 'inherit'] });
+    let buf = '';
+    w.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const r = JSON.parse(l); const f = kwWait.get(r.id); kwWait.delete(r.id); if (f) f(r); } catch {} } });
+    const gone = () => { if (kw === w) kw = null; for (const [id, f] of kwWait) { kwWait.delete(id); f({ id, ok: false, error: 'the Kokoro helper stopped' }); } };
+    w.on('exit', gone); w.on('error', gone); w.stdin.on('error', () => {});
+    return (kw = w);
+  }
+  function kokoroRun(q) {
+    return new Promise(ok => {
+      clearTimeout(kwIdle); const id = ++kwSeq; kwWait.set(id, r => { kwIdle = setTimeout(() => { try { kw && kw.kill('SIGTERM'); } catch {} }, 15 * 60 * 1000); kwIdle.unref?.(); ok(r); });
+      try { kokoroWorker().stdin.write(JSON.stringify({ id, ...q }) + '\n'); } catch (e) { kwWait.delete(id); ok({ ok: false, error: String(e.message || e) }); }
+    });
+  }
+  const runProc = (job, cmd, args) => new Promise(ok => {
+    if (job.cancelled) return ok(1);
+    const c = spawn(cmd, args, { stdio: 'ignore' }); job.procs.add(c);
+    c.on('error', () => { job.procs.delete(c); ok(127); }); c.on('close', code => { job.procs.delete(c); ok(code ?? 1); });
+  });
+  const ttsJobs = new Set();
+  const ttsStop = () => { for (const j of ttsJobs) { j.cancelled = true; for (const c of j.procs) { try { c.kill('SIGKILL'); } catch {} } } };
+  async function ttsSpeak(b) {
+    const engine = b.engine && ENGINES[b.engine] ? b.engine : ENGINE;
+    if (engine === 'none') return { ok: false, error: 'no speech engine is installed' };
+    const text = String(b.text || '').slice(0, 4000).trim(); if (!text) return { ok: true, silent: true };
+    const rate = Math.min(2, Math.max(0.5, +b.rate || 1)), pitch = Math.min(2, Math.max(0.5, +b.pitch || 1));
+    const job = { cancelled: false, procs: new Set() }; ttsJobs.add(job);
+    const wav = path.join(os.tmpdir(), `jaded-tts-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`);
+    const t0 = Date.now();
+    try {
+      let synthMs;
+      if (engine === 'kokoro') {
+        const vs = kokoroVoices(); const voice = vs.includes(b.voice) ? b.voice : (vs.includes('af_heart') ? 'af_heart' : vs[0]);
+        const r = await kokoroRun({ text, voice, speed: rate, out: wav }); if (!r.ok) return { ok: false, error: r.error || 'synthesis failed' };
+        synthMs = r.ms;
+      } else {
+        const voice = FLITE_VOICES.includes(b.voice) ? b.voice : FLITE_VOICES[0];
+        const code = await runProc(job, 'flite', ['-voice', voice, '--setf', 'duration_stretch=' + (1 / rate).toFixed(2), '--setf', 'int_f0_mean=' + Math.round(160 * pitch), '-t', text, '-o', wav]);
+        if (job.cancelled) return { ok: false, cancelled: true };
+        if (code !== 0) return { ok: false, error: 'flite failed (' + code + ')' };
+        synthMs = Date.now() - t0;
+      }
+      if (job.cancelled) return { ok: false, cancelled: true };
+      const code = await runProc(job, PLAYER[0], [...PLAYER.slice(1), wav]);
+      if (job.cancelled) return { ok: false, cancelled: true };
+      return code === 0 ? { ok: true, engine, synthMs, ms: Date.now() - t0 } : { ok: false, error: 'the audio player failed (' + code + ')' };
+    } finally { ttsJobs.delete(job); fs.rm(wav, { force: true }, () => {}); }
+  }
+
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x'); const q = u.searchParams; const p = u.pathname;
     try {
@@ -112,19 +185,20 @@ export function start(opt = {}) {
       if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || opt.anyHost || process.env.JADED_ANY_HOST === '1' || (HOST !== '127.0.0.1' && HOST !== 'localhost'))) { res.writeHead(421, { 'Content-Length': 11, Connection: 'close' }); return res.end('misdirected'); }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
         let html; try { html = fs.readFileSync(PAGE, 'utf8'); } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('jaded: no page at ' + PAGE + ' (build it: python3 app/build.py)'); }
-        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL })};</script>`;
+        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO })};</script>` + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
+        if (ENGINE === 'kokoro') { try { kokoroWorker(); } catch {} }   // load the model while the page opens
         const m = /<head[^>]*>|<html[^>]*>/i.exec(html.slice(0, 4096)) || /<!doctype[^>]*>/i.exec(html.slice(0, 4096));   // only the document start: '<head>' also occurs inside scripts
         html = m ? html.slice(0, m.index + m[0].length) + boot + html.slice(m.index + m[0].length) : boot + html;
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }); return res.end(html);
       }
       if (req.method === 'GET' && p === '/favicon.ico') { res.writeHead(204); return res.end(); }
-      if (!(p.startsWith('/fs/') || p.startsWith('/native/') || p.startsWith('/exec') || p.startsWith('/rpc/'))) { res.writeHead(404); return res.end('not found'); }
+      if (!(p.startsWith('/fs/') || p.startsWith('/native/') || p.startsWith('/exec') || p.startsWith('/rpc/') || p.startsWith('/tts/'))) { res.writeHead(404); return res.end('not found'); }
       if ((req.headers['x-jaded-token'] || q.get('token')) !== TOKEN) return json(res, 401, { error: 'bad token' });
 
       // ---- info + events
       if (p === '/native/ping') {
         return json(res, 200, { name: 'jaded', version: VERSION, root: ROOT, platform: process.platform, arch: process.arch, node: process.version, shell: SHELL,
-          tools: { busybox: tool('busybox'), node: process.version, micropython: tool('micropython'), sqlite3: tool('sqlite3'), python3: tool('python3') }, rpc: RPC_CMDS });
+          tts: TTS_INFO.engine, tools: { busybox: tool('busybox'), node: process.version, micropython: tool('micropython'), sqlite3: tool('sqlite3'), python3: tool('python3') }, rpc: RPC_CMDS });
       }
       if (p === '/native/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -141,6 +215,13 @@ export function start(opt = {}) {
       if (p.startsWith('/native/rpc/') && req.method === 'POST') {
         const id = +p.slice(12); const f = rpcWait.get(id); rpcWait.delete(id);
         if (f) f(JSON.parse((await readBody(req)).toString() || '{}')); return json(res, 200, { ok: !!f });
+      }
+      if (p === '/tts/info') return json(res, 200, TTS_INFO);
+      if (p === '/tts/stop' && req.method === 'POST') { ttsStop(); return json(res, 200, { ok: true }); }
+      if (p === '/tts/speak' && req.method === 'POST') {
+        const b = JSON.parse((await readBody(req)).toString() || '{}');
+        let gone = false; res.on('close', () => { if (!res.writableEnded) { gone = true; ttsStop(); } });
+        const r = await ttsSpeak(b); if (gone) return; return json(res, 200, r);
       }
       if (p === '/exec' && req.method === 'POST') { const b = JSON.parse((await readBody(req)).toString() || '{}'); return exec(req, res, b); }
 
@@ -182,7 +263,7 @@ export function start(opt = {}) {
     } catch (e) { try { json(res, 500, { error: String(e.message || e) }); } catch {} }
   });
   server.requestTimeout = 0; server.headersTimeout = 30000;
-  return new Promise((ok, no) => server.listen(PORT0, HOST, () => { const port = server.address().port; PORT = port; ok({ server, port, token: TOKEN, root: ROOT, url: `http://127.0.0.1:${port}/`, close: () => { for (const c of clients) c.end(); server.closeAllConnections?.(); server.close(); try { fs.rmSync(BIN, { recursive: true }); } catch {} } }); server.on('error', no); }));
+  return new Promise((ok, no) => server.listen(PORT0, HOST, () => { const port = server.address().port; PORT = port; ok({ server, port, token: TOKEN, root: ROOT, url: `http://127.0.0.1:${port}/`, close: () => { ttsStop(); try { kw && kw.kill('SIGKILL'); } catch {} for (const c of clients) c.end(); server.closeAllConnections?.(); server.close(); try { fs.rmSync(BIN, { recursive: true }); } catch {} } }); server.on('error', no); }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

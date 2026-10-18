@@ -1,0 +1,6 @@
+#!/bin/sh
+# stand-in for aplay in the tests: records the call (and keeps a copy of the audio), "plays" for a moment
+echo "aplay $*" >> "${FAKE_LOG:-/dev/null}"
+for f in "$@"; do last=$f; done
+[ -n "$FAKE_COPY" ] && cp "$last" "$FAKE_COPY/$(basename "$last")" 2>/dev/null
+sleep "${FAKE_PLAY:-0.2}"

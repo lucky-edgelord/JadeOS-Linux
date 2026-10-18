@@ -33,6 +33,7 @@ cmd = ["qemu-system-x86_64", "-machine", os.environ.get("QEMU_MACHINE", "q35"), 
        *(["-bios", BIOS] if BIOS else ["-drive", f"if=pflash,format=raw,readonly=on,file={code}", "-drive", f"if=pflash,format=raw,file={vv}"]),
        "-drive", f"file={disk},format=raw,if=none,id=d0", "-device", "ide-hd,drive=d0,bootindex=1" if False else "virtio-blk-pci,drive=d0,bootindex=1",
        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+       "-audiodev", "none,id=snd0", "-device", "intel-hda", "-device", "hda-duplex,audiodev=snd0",
        "-serial", f"unix:{sock},server=on,wait=off", "-monitor", f"unix:{mon},server=on,wait=off"]
 if fw == "ia32" and "secboot" in code and os.environ.get("QEMU_MACHINE", "q35").startswith("q35"):
     cmd += ["-global", "driver=cfi.pflash01,property=secure,value=on"]   # the 32-bit OVMF is a Secure Boot/SMM build
@@ -132,6 +133,15 @@ try:
         t = tok.group(1)
         c, o = sh("wget -qO- --header='X-Jaded-Token: %s' http://127.0.0.1:8080/native/ping" % t); ok('"name":"jaded"' in o, "jaded answers the API: " + o.strip()[:100])
         c, o = sh("wget -qO- http://127.0.0.1:8080/native/ping 2>&1 | tail -1"); ok("401" in o or "Unauthorized" in o, "and refuses calls without the token")
+    # speech: a sound card, ALSA, Flite and Kokoro are on the image, and the daemon can make and play speech
+    c, o = sh("cat /proc/asound/cards 2>&1 | head -3"); ok("HDA" in o or "Intel" in o, "a sound card is present: " + o.strip().replace("\n", " | "))
+    c, o = sh("command -v aplay amixer flite"); ok(c == 0 and "aplay" in o and "flite" in o, "aplay, amixer and flite are installed")
+    c, o = sh("ls /opt/kokoro/ready /opt/kokoro/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx 2>&1; ls /opt/kokoro/models/onnx-community/Kokoro-82M-v1.0-ONNX/voices | wc -l"); ok("No such file" not in o, "the Kokoro model and voices are installed: " + o.strip().replace("\n", " | "))
+    c, o = sh("cd /opt/kokoro && node -e \"import('onnxruntime-node').then(m => console.log('ort-ok', typeof m.InferenceSession), e => console.log('ort-fail', e.message))\" 2>&1 | tail -2", 120); ok("ort-ok function" in o, "onnxruntime loads on this system: " + o.strip()[-160:])
+    if tok:
+        c, o = sh("wget -T 120 -qO- --header='X-Jaded-Token: %s' --post-data='{\"text\":\"Testing the speaker.\",\"engine\":\"flite\"}' http://127.0.0.1:8080/tts/speak 2>&1 | head -c 300" % tok.group(1), 150); ok('"ok":true' in o, "Flite speaks through the sound card: " + o.strip()[:160])
+        t_k = time.time()
+        c, o = sh("wget -T 900 -qO- --header='X-Jaded-Token: %s' --post-data='{\"text\":\"Hello from Jade.\",\"engine\":\"kokoro\"}' http://127.0.0.1:8080/tts/speak 2>&1 | head -c 400" % tok.group(1), 920); ok('"ok":true' in o, "Kokoro speaks (%d s in the emulator, which is slow): %s" % (time.time() - t_k, o.strip()[:200]))
     c, o = sh("ps w | grep -q '[j]aded.mjs' && echo node-running; ps w | grep -q '[c]og' && echo cog-running"); ok("node-running" in o, "jaded is running")
     ok("cog-running" in o, "the kiosk browser (Cog) is running")
     ppm = os.path.join(work, "screen.ppm"); colours = 0

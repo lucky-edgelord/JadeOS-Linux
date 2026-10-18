@@ -34,6 +34,10 @@ jobs:
       - run: tools/fetch_page.sh
       - run: node tests/jaded_test.mjs
       - run: node tests/native_test.mjs
+      - name: Kokoro text to speech (the real model, offline)
+        run: |
+          tools/fetch_kokoro.sh
+          node tests/kokoro_test.mjs
 
   image:
     needs: host
@@ -62,6 +66,9 @@ jobs:
       - name: Jade Vault page
         if: steps.img.outputs.cache-hit != 'true'
         run: tools/fetch_page.sh
+      - name: Kokoro text to speech (model, voices, runtime)
+        if: steps.img.outputs.cache-hit != 'true'
+        run: tools/fetch_kokoro.sh
       - name: Buildroot
         if: steps.img.outputs.cache-hit != 'true'
         run: git clone --depth 1 -b $BUILDROOT_REF https://github.com/buildroot/buildroot ../buildroot

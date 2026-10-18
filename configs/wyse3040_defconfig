@@ -22,6 +22,12 @@ BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 # the real tools: BusyBox with all its applets, node, micropython, sqlite3
 BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
 BR2_PACKAGE_NODEJS=y
+# speech: ALSA for the sound card, Flite as the small fallback voice (Kokoro, the main one, is added by tools/fetch_kokoro.sh)
+BR2_PACKAGE_ALSA_UTILS=y
+BR2_PACKAGE_ALSA_UTILS_ALSACTL=y
+BR2_PACKAGE_ALSA_UTILS_AMIXER=y
+BR2_PACKAGE_ALSA_UTILS_APLAY=y
+BR2_PACKAGE_FLITE=y
 BR2_PACKAGE_MICROPYTHON=y
 BR2_PACKAGE_MICROPYTHON_LIB=y
 BR2_PACKAGE_SQLITE=y
@@ -78,7 +84,7 @@ BR2_PACKAGE_JADEOS=y
 # images: ext4 root (read-only at run time), GPT disk with EFI System Partition, GRUB for 32-bit and 64-bit UEFI
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
-BR2_TARGET_ROOTFS_EXT2_SIZE="1536M"
+BR2_TARGET_ROOTFS_EXT2_SIZE="2G"
 # BR2_TARGET_ROOTFS_TAR is not set
 BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_I386_EFI=y

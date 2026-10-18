@@ -5,6 +5,8 @@ import http from 'node:http';
 import { start } from '../native/jaded.mjs';
 
 const log = [], fail = []; const ok = (c, m) => (c ? log : fail).push((c ? 'PASS ' : 'FAIL ') + m);
+const fakeLog = path.join(os.tmpdir(), 'fake-tts-' + process.pid + '.log'); fs.writeFileSync(fakeLog, '');
+process.env.FAKE_LOG = fakeLog; process.env.PATH = path.resolve('tests/fake') + ':' + process.env.PATH; process.env.FAKE_PLAY = '0.4';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jaded-root-'));
 const page = path.join(root, '..', 'jaded-page-' + process.pid + '.html'); fs.writeFileSync(page, '<!doctype html><html><head><title>t</title></head><body>hi</body></html>');
 const d = await start({ port: 0, root, page, token: 'tok123' });
@@ -91,6 +93,21 @@ clearInterval(answer);
 ok(e.code === 3 && e.out === 'ran jade tool,notes_search,query=x stdin=piped\n cwd=/x2\n' && e.err === 'warn\n', 'jade relays to the page: ' + JSON.stringify(e));
 evReq.destroy();
 e = await exec('jade tools'); ok(/page is not open/.test(e.err) && e.code !== 0, 'jade without a page says so: ' + JSON.stringify(e.err));
+
+
+// ---- speech: /tts/* with a stand-in flite and aplay
+r = await call('/tts/info'); ok(r.json.engine === 'flite' && r.json.voices.length >= 1 && r.json.voices[0].id === 'slt', 'tts info: ' + r.text.slice(0, 120));
+ok(r.json && (await fetch(base + '/tts/info')).status === 401, 'tts needs the token');
+fs.writeFileSync(fakeLog, '');
+r = await call('/tts/speak', { method: 'POST', body: JSON.stringify({ text: 'Hello there.', rate: 1.25, pitch: 1.25 }) });
+{ const l = fs.readFileSync(fakeLog, 'utf8'); ok(r.json.ok === true && /flite .*-t Hello there\./.test(l) && /duration_stretch=0\.80/.test(l) && /aplay -q .*\.wav/.test(l), 'speak: synthesised then played: ' + r.text + ' ' + l.replace(/\n/g, ' | ')); }
+r = await call('/tts/speak', { method: 'POST', body: JSON.stringify({ text: '   ' }) }); ok(r.json.ok === true && r.json.silent === true, 'empty text is a no-op');
+{ // stop interrupts playing audio
+  const t0 = Date.now(); const pr = call('/tts/speak', { method: 'POST', body: JSON.stringify({ text: 'a long sentence' }) });
+  await new Promise(x => setTimeout(x, 150)); await call('/tts/stop', { method: 'POST', body: '{}' });
+  const rr = await pr; ok(rr.json.cancelled === true && Date.now() - t0 < 380, 'stop cancels the audio in flight: ' + rr.text + ' ' + (Date.now() - t0) + 'ms');
+}
+r = await call('/tts/speak', { method: 'POST', body: JSON.stringify({ text: 'x', engine: 'kokoro' }) }); ok(r.json.ok === true, 'an engine that is not installed falls back to the default');
 
 d.close(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(page, { force: true });
 for (const l of log) console.log(l); for (const l of fail) console.log(l);
