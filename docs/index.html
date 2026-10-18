@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JadeOS-Linux</title>
+<meta name="description" content="A small Linux appliance that boots straight into Jade Vault full screen, with real Node.js, MicroPython, SQLite and a real shell behind it.">
+<style>
+:root{
+  --bg:#0c1210; --panel:#121b18; --panel2:#17231f; --line:#223530; --text:#e4efe9; --dim:#8fa59c;
+  --jade:#3ddc97; --jade2:#2ab57a; --ink:#06130d; --warn:#e9b44c; --code:#0a100e;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f5f8f6; --panel:#ffffff; --panel2:#eef4f1; --line:#d5e2dc; --text:#13211b; --dim:#51665c;
+    --jade:#0b8a57; --jade2:#087048; --ink:#ffffff; --warn:#8a5a00; --code:#eef4f1;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f5f8f6; --panel:#ffffff; --panel2:#eef4f1; --line:#d5e2dc; --text:#13211b; --dim:#51665c;
+  --jade:#0b8a57; --jade2:#087048; --ink:#ffffff; --warn:#8a5a00; --code:#eef4f1;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--jade)}
+a:hover{color:var(--jade2)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header.top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+header.top .wrap{display:flex;align-items:center;gap:20px;height:56px}
+.brand{font-weight:700;letter-spacing:.2px;color:var(--text);text-decoration:none;display:flex;align-items:center;gap:10px}
+.brand i{width:14px;height:14px;border-radius:4px;background:var(--jade);display:inline-block;transform:rotate(45deg)}
+nav{display:flex;gap:18px;margin-left:auto;font-size:14px}
+nav a{color:var(--dim);text-decoration:none}
+nav a:hover{color:var(--text)}
+@media(max-width:640px){nav a.hide-s{display:none}}
+.hero{padding:72px 0 48px}
+.eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--jade)}
+h1{font-size:clamp(34px,6vw,60px);line-height:1.05;margin:14px 0 18px;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--jade)}
+.lead{font-size:clamp(17px,2.2vw,20px);color:var(--dim);max-width:680px;margin:0 0 28px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:10px;font-weight:600;text-decoration:none;border:1px solid var(--line);color:var(--text);background:var(--panel)}
+.btn.primary{background:var(--jade);border-color:var(--jade);color:var(--ink)}
+.btn.primary:hover{background:var(--jade2);color:var(--ink)}
+.btn:hover{border-color:var(--jade)}
+.meta{font-size:13px;color:var(--dim);margin-top:14px}
+section{padding:44px 0;border-top:1px solid var(--line)}
+h2{font-size:28px;margin:0 0 6px;letter-spacing:-.01em}
+.sub{color:var(--dim);margin:0 0 26px;max-width:700px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+.card h3{margin:0 0 6px;font-size:16px}
+.card p{margin:0;color:var(--dim);font-size:14.5px}
+.tag{font:600 11px/1 var(--mono);color:var(--jade);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;display:block}
+pre,code{font-family:var(--mono)}
+code{background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:.9em}
+.cmd{position:relative;background:var(--code);border:1px solid var(--line);border-radius:12px;padding:14px 92px 14px 16px;overflow-x:auto;margin:12px 0}
+.cmd pre{margin:0;font-size:13.5px;white-space:pre;color:var(--text)}
+.cmd button{position:absolute;right:10px;top:10px;font:600 12px var(--sans);padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
+.cmd button:hover{border-color:var(--jade)}
+ol.steps{list-style:none;counter-reset:s;padding:0;margin:0;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.card,ol.steps>li{min-width:0}
+.cmd{max-width:100%}
+ol.steps>li{counter-increment:s;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px 16px 62px;position:relative}
+ol.steps>li::before{content:counter(s);position:absolute;left:18px;top:16px;width:30px;height:30px;border-radius:50%;background:var(--jade);color:var(--ink);font-weight:700;display:grid;place-items:center}
+ol.steps h3{margin:0 0 4px;font-size:16px}
+ol.steps p{margin:0 0 6px;color:var(--dim);font-size:14.5px}
+table{width:100%;border-collapse:collapse;font-size:14.5px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim);background:var(--panel2)}
+tr:last-child td{border-bottom:0}
+.ok{color:var(--jade);font-weight:600}
+.no{color:var(--warn);font-weight:600}
+.tablewrap{overflow-x:auto}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;overflow-x:auto}
+.diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}
+svg .b{fill:var(--panel2);stroke:var(--line)}
+svg .bj{fill:var(--panel2);stroke:var(--jade)}
+svg text{fill:var(--text);font:13px var(--sans)}
+svg .d{fill:var(--dim);font:12px var(--mono)}
+svg .l{stroke:var(--jade);stroke-width:1.6;fill:none}
+svg .ah{fill:var(--jade)}
+footer{padding:30px 0 60px;border-top:1px solid var(--line);color:var(--dim);font-size:14px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:8px 22px}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#top"><i></i>JadeOS-Linux</a>
+  <nav>
+    <a href="#install">Install</a>
+    <a href="#hardware" class="hide-s">Hardware</a>
+    <a href="#how" class="hide-s">How it works</a>
+    <a href="#status">Status</a>
+    <a href="https://github.com/lucky-edgelord/JadeOS-Linux">GitHub</a>
+  </nav>
+</div></header>
+
+<main id="top">
+<div class="wrap">
+  <div class="hero">
+    <div class="eyebrow">Appliance Linux for Jade Vault</div>
+    <h1>Jade, full screen, on <em>real hardware</em>.</h1>
+    <p class="lead">A small Linux that boots straight into <a href="https://github.com/lucky-edgelord/jade-vault">Jade Vault</a>, with a real file system, a real shell, real Node.js, MicroPython and SQLite behind it. The Android app's experience, on a thin client or mini PC.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/lucky-edgelord/JadeOS-Linux/releases/latest">Download the image</a>
+      <a class="btn" href="https://github.com/lucky-edgelord/JadeOS-Linux">Source on GitHub</a>
+    </div>
+    <p class="meta">About 150 MB compressed &middot; raw disk image for USB or internal drive &middot; 64-bit UEFI x86 &middot; not yet tested on a physical machine (see <a href="#status">status</a>)</p>
+  </div>
+</div>
+
+<section><div class="wrap">
+  <h2>What you get</h2>
+  <p class="sub">No browser sandbox in the way: the app talks to the actual machine.</p>
+  <div class="grid">
+    <div class="card"><span class="tag">Files</span><h3>Real file system</h3><p>The vault is a folder, <code>/home/jade</code>. Other programs can read and write the same files and the app updates live.</p></div>
+    <div class="card"><span class="tag">Shell</span><h3>Real BusyBox shell</h3><p>Pipes, redirects, globbing, <code>cd</code> anywhere. The Shell tab and the agent's shell tool run the same <code>sh</code>. No WebAssembly.</p></div>
+    <div class="card"><span class="tag">Runtimes</span><h3>Node, MicroPython, SQLite</h3><p>Real <code>node</code>, <code>micropython</code> and <code>sqlite3</code> on the PATH, plus curl, nano, iw and wpa_supplicant.</p></div>
+    <div class="card"><span class="tag">Jade</span><h3>Jade's own commands</h3><p><code>jade</code>, <code>flow</code>, <code>crontab</code>, <code>search</code>, <code>tags</code> and the rest work from the shell too.</p></div>
+    <div class="card"><span class="tag">Screen</span><h3>WebKit on the GPU</h3><p>WPE WebKit through Cog straight on KMS/DRM with Mesa, so WebGL and the Live2D avatar run accelerated.</p></div>
+    <div class="card"><span class="tag">Appliance</span><h3>Safe to power off</h3><p>Read-only root. Your data lives on its own partition that grows to fill the disk on first boot.</p></div>
+  </div>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>Install</h2>
+  <p class="sub">Four steps. You need a USB stick (4 GB or more) or a spare drive.</p>
+  <ol class="steps">
+    <li><h3>Download</h3><p>Get <code>jadeos-wyse3040.img.gz</code> (and the <code>.sha256</code> file) from the <a href="https://github.com/lucky-edgelord/JadeOS-Linux/releases/latest">latest release</a>. The filename says Wyse 3040, but it is the one image for every supported machine.</p></li>
+    <li><h3>Write it to a stick</h3>
+      <p>On Linux or macOS (check the device name first, <code>dd</code> overwrites it):</p>
+      <div class="cmd"><pre>gunzip -c jadeos-wyse3040.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync</pre><button data-copy>Copy</button></div>
+      <p>On Windows use balenaEtcher or Rufus in DD mode.</p></li>
+    <li><h3>Boot it</h3><p>Press F12 at power-on and choose the stick. <strong>Turn Secure Boot off</strong>, the image is not signed. On a Dell Wyse 3040 the BIOS password, if one is set, is often <code>Fireport</code>.</p></li>
+    <li><h3>Wait a minute</h3><p>The first boot grows the data partition to fill the stick or drive, then Jade appears full screen. To make it permanent, <code>dd</code> the image onto the internal drive from any live Linux.</p></li>
+  </ol>
+
+  <h3 style="margin:30px 0 8px">Network</h3>
+  <div class="grid">
+    <div class="card"><span class="tag">Ethernet</span><h3>Nothing to do</h3><p>Every wired port (<code>eth0</code>, <code>enp0s25</code>, <code>eno1</code>…) asks for an address with DHCP at boot.</p></div>
+    <div class="card"><span class="tag">Wi-Fi</span><h3>Use a USB adapter</h3><p>Realtek, MediaTek, Atheros and Ralink USB drivers and firmware are included, plus Intel cards. Broadcom is not. Then, in the Shell tab:</p>
+      <div class="cmd" style="margin-bottom:0"><pre>jade-wifi "My network" "password"</pre><button data-copy>Copy</button></div></div>
+  </div>
+</div></section>
+
+<section id="hardware"><div class="wrap">
+  <h2>Hardware</h2>
+  <p class="sub">Any x86-64 machine with 64-bit UEFI and at least 2 GB of RAM should boot it. The Intel graphics drivers cover most thin clients and mini PCs; other GPUs fall back to software rendering.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Machine</th><th>Boot</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Dell OptiPlex 3020 Micro</td><td>64-bit UEFI</td><td>Intel HD (Haswell) graphics, e1000e Ethernet. Use a USB Wi-Fi adapter.</td></tr>
+      <tr><td>Dell Wyse 3040</td><td>32-bit UEFI on a 64-bit CPU</td><td>The image carries GRUB for both. The 32-bit path could not be tested in an emulator.</td></tr>
+      <tr><td>Other 64-bit UEFI x86 PCs</td><td>64-bit UEFI</td><td>Intel/Realtek Ethernet built in. Serial console at 115200 for debugging.</td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="sub">The Jade Vault page is unchanged except for two swaps: its file system class and its shell runner now talk to a small local daemon instead of the browser sandbox.</p>
+  <div class="diagram">
+    <svg viewBox="0 0 760 250" role="img" aria-label="Cog browser talks to the jaded daemon over localhost; jaded reaches files, the real shell and Jade commands">
+      <rect class="bj" x="12" y="88" width="190" height="74" rx="12"/>
+      <text x="107" y="118" text-anchor="middle" font-weight="600">Cog (WebKit)</text>
+      <text class="d" x="107" y="140" text-anchor="middle">Jade page, full screen</text>
+
+      <path class="l" d="M202 125 H318"/><path class="ah" d="M318 119 l10 6 -10 6z"/>
+      <text class="d" x="265" y="112" text-anchor="middle">127.0.0.1:8080</text>
+
+      <rect class="bj" x="330" y="76" width="190" height="98" rx="12"/>
+      <text x="425" y="108" text-anchor="middle" font-weight="600">jaded (Node.js)</text>
+      <text class="d" x="425" y="130" text-anchor="middle">token + Host checks</text>
+      <text class="d" x="425" y="150" text-anchor="middle">live file watcher</text>
+
+      <path class="l" d="M520 98 H590"/><path class="ah" d="M590 92 l10 6 -10 6z"/>
+      <path class="l" d="M520 125 H560 V142 H590"/><path class="ah" d="M590 136 l10 6 -10 6z"/>
+      <path class="l" d="M520 150 H540 V186 H590"/><path class="ah" d="M590 180 l10 6 -10 6z"/>
+
+      <rect class="b" x="602" y="78" width="146" height="40" rx="9"/><text x="675" y="103" text-anchor="middle">/fs &#8594; /home/jade</text>
+      <rect class="b" x="602" y="122" width="146" height="40" rx="9"/><text x="675" y="147" text-anchor="middle">/exec &#8594; BusyBox sh</text>
+      <rect class="b" x="602" y="166" width="146" height="40" rx="9"/><text x="675" y="191" text-anchor="middle">/rpc &#8594; jade, flow&#8230;</text>
+    </svg>
+  </div>
+  <p class="sub" style="margin-top:16px">jaded listens only on localhost, refuses foreign <code>Host</code> headers, and every call needs a per-boot token that only the page it serves carries, so another web page cannot drive the shell.</p>
+  <p class="sub">The system is Buildroot 2025.02 with Linux 6.12, GRUB for 32- and 64-bit EFI, eudev, BusyBox init, WPE WebKit 2.48 with Cog, Mesa, Node.js, MicroPython and SQLite, on a GPT disk with an EFI partition, a read-only root and a data partition.</p>
+</div></section>
+
+<section id="status"><div class="wrap">
+  <h2>Status</h2>
+  <p class="sub">What has actually been run, and what has not.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Area</th><th>State</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Daemon, file API, real shell, page integration</td><td class="ok">Tested</td><td>72 checks in headless Chromium on every CI run</td></tr>
+      <tr><td>Boot on 64-bit UEFI</td><td class="ok">Tested in QEMU</td><td>17 checks: login, BusyBox, Node, MicroPython, SQLite, read-only root, data growth, DHCP, daemon, browser, and the page on screen (read back with OCR)</td></tr>
+      <tr><td>Real hardware</td><td class="no">Not tested</td><td>Nothing has run on a physical Wyse 3040 or OptiPlex yet</td></tr>
+      <tr><td>32-bit UEFI boot (Wyse 3040)</td><td class="no">Not tested</td><td>The emulator's 32-bit firmware crashes before reaching the image</td></tr>
+      <tr><td>USB Wi-Fi</td><td class="no">Not tested</td><td>QEMU has no Wi-Fi hardware</td></tr>
+      <tr><td>Offline fonts and syntax highlighting</td><td class="no">Partial</td><td>The page still loads highlight.js, the terminal and fonts from CDNs; offline it falls back to plain text</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub" style="margin-top:16px">If you try it on real hardware, please <a href="https://github.com/lucky-edgelord/JadeOS-Linux/issues">open an issue</a> with what worked.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Build it yourself</h2>
+  <p class="sub">CI builds the image (4–5 hours on a GitHub runner), boots it in QEMU and publishes it. Locally:</p>
+  <div class="cmd"><pre>git clone --depth 1 -b 2025.02.6 https://github.com/buildroot/buildroot ../buildroot
+tools/fetch_page.sh
+make -C ../buildroot BR2_EXTERNAL=$PWD O=$PWD/output wyse3040_defconfig
+make -C ../buildroot BR2_EXTERNAL=$PWD O=$PWD/output</pre><button data-copy>Copy</button></div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>JadeOS-Linux</span>
+  <a href="https://github.com/lucky-edgelord/JadeOS-Linux">Source</a>
+  <a href="https://github.com/lucky-edgelord/JadeOS-Linux/releases">Releases</a>
+  <a href="https://github.com/lucky-edgelord/jade-vault">Jade Vault</a>
+  <a href="https://github.com/lucky-edgelord/JadeOS-esp32">JadeOS-esp32</a>
+</div></footer>
+
+<script>
+document.querySelectorAll('[data-copy]').forEach(function(b){
+  b.addEventListener('click',function(){
+    var t=b.parentNode.querySelector('pre').textContent;
+    var done=function(){var o=b.textContent;b.textContent='Copied';setTimeout(function(){b.textContent=o},1400)};
+    try{navigator.clipboard.writeText(t).then(done,function(){})}catch(e){}
+  });
+});
+</script>
+</body>
+</html>

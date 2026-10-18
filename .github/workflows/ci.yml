@@ -1,0 +1,257 @@
+name: ci
+
+# 1) quick: the native-host daemon and page, tested in headless Chromium against the real shell
+# 2) the Buildroot image for the Dell Wyse 3040 (hours; ccache + the download cache make a re-run fast), booted in QEMU
+#    with 32-bit and 64-bit UEFI firmware, then published as an artifact (and a release on tags / manual runs)
+on:
+  push:
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "publish a GitHub release with the image"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  BUILDROOT_REF: 2025.02.6
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: tools/fetch_page.sh
+      - run: node tests/jaded_test.mjs
+      - run: node tests/native_test.mjs
+
+  image:
+    needs: host
+    runs-on: ubuntu-latest
+    timeout-minutes: 400
+    steps:
+      - uses: actions/checkout@v4
+      # the finished image is cached by everything that goes into it, so changing only the tests re-uses it
+      - name: Image cache
+        id: img
+        uses: actions/cache/restore@v4
+        with:
+          path: output/images
+          key: img-${{ env.BUILDROOT_REF }}-${{ hashFiles('configs/**', 'board/**', 'package/**', 'native/**', 'tools/**', 'external.*', 'Config.in') }}
+      - name: Free disk space
+        if: steps.img.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+      - name: Build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libncurses-dev unzip bc cpio rsync file wget python3 perl libssl-dev libelf-dev \
+            qemu-system-x86 ovmf ovmf-ia32 imagemagick ccache tesseract-ocr
+      - name: Jade Vault page
+        if: steps.img.outputs.cache-hit != 'true'
+        run: tools/fetch_page.sh
+      - name: Buildroot
+        if: steps.img.outputs.cache-hit != 'true'
+        run: git clone --depth 1 -b $BUILDROOT_REF https://github.com/buildroot/buildroot ../buildroot
+      - name: Restore compiler caches
+        if: steps.img.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BUILDROOT_REF }}-${{ github.run_id }}
+          restore-keys: |
+            br-${{ env.BUILDROOT_REF }}-
+      - name: Configure
+        if: steps.img.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.buildroot-dl ~/.buildroot-ccache
+          cd ../buildroot
+          make BR2_EXTERNAL=$GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/output wyse3040_defconfig
+          {
+            echo "BR2_DL_DIR=\"$HOME/.buildroot-dl\""
+            echo "BR2_CCACHE=y"
+            echo "BR2_CCACHE_DIR=\"$HOME/.buildroot-ccache\""
+          } >> $GITHUB_WORKSPACE/output/.config
+          make O=$GITHUB_WORKSPACE/output olddefconfig
+      - name: Build (stops itself before the job limit; re-run to continue from the cache)
+        id: build
+        if: steps.img.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          cd output
+          set +e
+          timeout 21000 make -C ../../buildroot O=$PWD BR2_EXTERNAL=$GITHUB_WORKSPACE -j"$(nproc)" > ../build.log 2>&1
+          echo "make exit code: $?" | tee ../make.rc
+          df -h / > ../disk.txt; free -m > ../mem.txt
+          tail -n 40 ../build.log
+          test -f images/jadeos-wyse3040.img.gz
+      - name: Save compiler caches
+        if: always() && steps.img.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BUILDROOT_REF }}-${{ github.run_id }}
+      - name: Save the image
+        if: steps.build.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: output/images
+          key: ${{ steps.img.outputs.cache-primary-key }}
+      - name: Build log
+        if: always() && steps.img.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+      - name: Not finished
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error::the image is not finished (time limit or a build error, see build-log). Re-run the job: ccache and the download cache resume it."
+          exit 1
+      - name: Unpack the image
+        run: |
+          cd output/images
+          ls -la
+          [ -f jadeos-wyse3040.img ] || gunzip -k jadeos-wyse3040.img.gz
+      - name: Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: jadeos-wyse3040
+          path: |
+            output/images/jadeos-wyse3040.img.gz
+            output/images/jadeos-wyse3040.img.gz.sha256
+      - name: Alternative 32-bit UEFI firmware (Debian's OVMF32 crashes on the q35 machine)
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/alt && cd /tmp/alt
+          for u in https://github.com/retrage/edk2-nightly/raw/master/bin/RELEASEIA32_OVMF.fd \
+                   https://github.com/retrage/edk2-nightly/raw/master/bin/DEBUGIA32_OVMF.fd; do
+            if curl -fsSL "$u" -o ovmf32.fd && [ "$(stat -c %s ovmf32.fd)" -gt 1000000 ]; then
+              echo "FW_BIOS=$PWD/ovmf32.fd" >> $GITHUB_ENV; echo "QEMU_MACHINE_IA32=q35" >> $GITHUB_ENV
+              echo "::notice title=alt firmware::using $u ($(stat -c %s ovmf32.fd) bytes)"; exit 0
+            fi
+          done
+          echo "::notice title=alt firmware::download failed"; curl -sSI https://github.com/retrage/edk2-nightly 2>&1 | head -3
+      - name: Direct kernel boot (diagnostic, no firmware or bootloader involved)
+        continue-on-error: true
+        run: |
+          mkdir -p qemu-out
+          run() { # name, qemu cpu/accel args, extra kernel args
+            timeout 50 qemu-system-x86_64 -machine q35 $2 -m 1024 -nographic -no-reboot \
+              -kernel output/images/bzImage -append "console=ttyS0 earlycon=uart8250,io,0x3f8 earlyprintk=serial,ttyS0,115200 ignore_loglevel root=/dev/vda2 rootwait ro jade.nokiosk=1 panic=-1 $3" \
+              -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0 > qemu-out/direct-$1.txt 2>&1 || true
+            msg=$( { echo "== $1: $2 $3"; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/direct-$1.txt | grep -v -E '^(iPXE|Press Ctrl|Booting from|SeaBIOS)' | tail -n 45 | tail -c 4500; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=direct $1::$msg"
+          }
+          ls -la /dev/kvm; file output/images/bzImage
+          run max "-cpu max" ""
+          run westmere "-cpu Westmere" ""
+          run sandybridge "-cpu SandyBridge" ""
+          run silvermont-like "-cpu Haswell,-avx,-avx2,-bmi1,-bmi2,-fma,-abm" ""
+          # 32-bit UEFI firmware (a Secure-Boot/SMM build): which machine setup does it survive, with the disk attached?
+          fw() { # name, args
+            cp /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/v-$1.fd
+            timeout 60 qemu-system-x86_64 $2 -display none -serial file:qemu-out/fw-$1.txt -monitor none \
+              -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF32_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=/tmp/v-$1.fd \
+              -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0,bootindex=1 >qemu-out/fw-$1.err 2>&1 || true
+            msg=$( { echo "== fw $1: $2"; head -c 300 qemu-out/fw-$1.err; LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-$1.txt | sed -E 's/\[[0-9;=?]*[A-Za-z]//g;s/   */ /g' | tail -n 14 | tail -c 1400; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=fw $1::$msg"
+          }
+          # 32-bit firmware on the legacy "pc" machine (q35 crashes inside this OVMF build): watch the screen over time
+          cp /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/v-pc.fd
+          ( sleep 25; echo "screendump /tmp/s25.ppm"; sleep 35; echo "screendump /tmp/s60.ppm"; sleep 60; echo "screendump /tmp/s120.ppm"; sleep 3; echo quit ) | \
+          timeout 150 qemu-system-x86_64 -machine pc -cpu max -m 1024 -vga std -display none -serial file:qemu-out/fw-pc-long.txt -monitor stdio \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF32_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=/tmp/v-pc.fd \
+            -drive file=output/images/jadeos-wyse3040.img,format=raw,if=none,id=d0,snapshot=on -device virtio-blk-pci,drive=d0,bootindex=1 >qemu-out/fw-pc-long.err 2>&1 || true
+          for t in 25 60 120; do
+            convert /tmp/s$t.ppm /tmp/s$t.png 2>/dev/null
+            msg=$( { echo "== fw pc screen at ${t}s"; tesseract /tmp/s$t.png - 2>/dev/null | head -30; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=fwscreen $t::$msg"
+          done
+          echo "::notice title=fwserial::$(LC_ALL=C tr -cd '\n\11\40-\176' < qemu-out/fw-pc-long.txt | tail -c 1500 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+      - name: Boot test, 32-bit UEFI (the Wyse 3040's firmware)
+        id: boot32
+        continue-on-error: true
+        env: { QEMU_MEM: "1024", QEMU_CPU: max, QEMU_MACHINE: "${{ env.QEMU_MACHINE_IA32 || 'pc' }}", QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        run: |
+          mkdir -p qemu-out
+          set -o pipefail
+          python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img ia32 qemu-out 2>&1 | tee qemu-out/test-ia32.txt
+      - name: Boot test, 64-bit UEFI
+        id: boot64
+        continue-on-error: true
+        env: { QEMU_CPU: max, QEMU_ENTRY: debug, BOOT_WAIT: "90" }
+        run: |
+          mkdir -p qemu-out
+          set -o pipefail
+          python3 tests/qemu_boot.py output/images/jadeos-wyse3040.img x64 qemu-out 2>&1 | tee qemu-out/test-x64.txt
+      - name: Show boot logs as annotations (job logs are not readable from outside)
+        if: always()
+        run: |
+          for f in qemu-out/test-ia32.txt qemu-out/test-x64.txt; do
+            [ -f $f ] || continue
+            msg=$(LC_ALL=C tr -cd '\n\11\40-\176' < $f | sed 's/   */ /g' | tail -n 60 | tail -c 5000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=$f::$msg"
+          done
+          for f in qemu-out/fail-*.png; do
+            [ -f $f ] || continue
+            msg=$(tesseract $f - 2>/dev/null | tail -n 40 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=screen $f::$msg"
+          done
+          for f in qemu-out/diag-*.txt; do
+            [ -f $f ] || continue
+            msg=$(LC_ALL=C tr -cd '\n\11\40-\176' < $f | cut -c1-220 | tail -c 9000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=diag $f::$msg"
+          done
+          for d in qemu-out/run-*; do
+            [ -f $d/serial.log ] || continue
+            msg=$(tail -c 12000 $d/serial.log | LC_ALL=C tr -cd '\n\11\40-\176' | sed -E 's/\[[0-9;=?]*[A-Za-z]//g;s/   */ /g' | tail -n 70 | tail -c 6000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::notice title=serial $d::$msg"
+          done
+      - name: Publish logs (branch ci-results)
+        if: always()
+        run: |
+          mkdir -p /tmp/res
+          { echo "run $GITHUB_RUN_ID sha $GITHUB_SHA"; cat make.rc disk.txt mem.txt 2>/dev/null; echo "boot32=${{ steps.boot32.outcome }} boot64=${{ steps.boot64.outcome }}";
+            if [ -f build.log ]; then n=$(grep -n -m1 -E '^make(\[[0-9]+\])?: \*\*\*' build.log | cut -d: -f1); [ -n "$n" ] && sed -n "$((n>150?n-150:1)),$((n+3))p" build.log; tail -n 60 build.log; fi; } > /tmp/res/build-tail.txt 2>/dev/null || true
+          cp -r qemu-out /tmp/res/ 2>/dev/null || true
+          find /tmp/res -name '*.ppm' -size +1M -delete 2>/dev/null || true
+          cd /tmp/res && git init -q && git checkout -q -b ci-results && git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci results for $GITHUB_SHA" || true
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-results 2>&1 | sed 's/x-access-token:[^@]*@//' || true
+      - name: Boot test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-boot
+          path: qemu-out
+          if-no-files-found: ignore
+      - name: 64-bit boot test passed?
+        run: |
+          echo "32-bit UEFI boot test: ${{ steps.boot32.outcome }} (informational: Debian's 32-bit OVMF crashes inside QEMU before reaching the image)"
+          test "${{ steps.boot64.outcome }}" = success
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[release]'))
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
+          files: |
+            output/images/jadeos-wyse3040.img.gz
+            output/images/jadeos-wyse3040.img.gz.sha256
