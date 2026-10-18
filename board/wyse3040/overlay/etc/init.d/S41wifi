@@ -3,11 +3,15 @@
 case "$1" in
   start)
     [ -f /data/etc/wpa_supplicant.conf ] || exit 0
-    for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /sys/class/net/wlan0 ] && break; sleep 1; done
-    [ -d /sys/class/net/wlan0 ] || { echo "wifi: no wlan0"; exit 0; }
-    ifconfig wlan0 up
-    wpa_supplicant -B -i wlan0 -c /data/etc/wpa_supplicant.conf -P /run/wpa_supplicant.pid
-    udhcpc -b -i wlan0 -p /run/udhcpc.wlan0.pid -x hostname:jadeos
+    W=
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do   # a USB dongle can take a few seconds to show up (wlan0, wlx<mac> ...)
+      for d in /sys/class/net/*; do [ -d "$d/wireless" ] || [ -d "$d/phy80211" ] && W=${d##*/} && break; done
+      [ -n "$W" ] && break; sleep 1
+    done
+    [ -n "$W" ] || { echo "wifi: no wireless adapter found"; exit 0; }
+    ifconfig "$W" up
+    wpa_supplicant -B -i "$W" -c /data/etc/wpa_supplicant.conf -P /run/wpa_supplicant.pid
+    udhcpc -b -i "$W" -p "/run/udhcpc.$W.pid" -x hostname:jadeos
     ;;
   stop) [ -f /run/wpa_supplicant.pid ] && kill "$(cat /run/wpa_supplicant.pid)" ;;
 esac
