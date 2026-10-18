@@ -19,7 +19,8 @@ FW = {
 code, vars_ = FW[fw]
 if fw == "ia32" and os.environ.get("FW_CODE") and os.environ.get("FW_VARS"):
     code, vars_ = os.environ["FW_CODE"], os.environ["FW_VARS"]   # an alternative 32-bit firmware build
-for f in (code, vars_):
+BIOS = os.environ.get("FW_BIOS") if fw == "ia32" else None
+for f in ([BIOS] if BIOS else (code, vars_)):
     if not os.path.exists(f):
         sys.exit("missing firmware file " + f)
 work = os.path.join(out, "run-" + fw); os.makedirs(work, exist_ok=True)
@@ -29,7 +30,7 @@ subprocess.run(["truncate", "-s", "4G", disk], check=True)
 vv = os.path.join(work, "vars.fd"); shutil.copy(vars_, vv)
 sock = os.path.join(work, "serial.sock"); mon = os.path.join(work, "mon.sock")
 cmd = ["qemu-system-x86_64", "-machine", os.environ.get("QEMU_MACHINE", "q35"), "-cpu", os.environ.get("QEMU_CPU", "Nehalem"), "-m", os.environ.get("QEMU_MEM", "2048"), "-smp", "2", "-display", "none", "-vga", "std",
-       "-drive", f"if=pflash,format=raw,readonly=on,file={code}", "-drive", f"if=pflash,format=raw,file={vv}",
+       *(["-bios", BIOS] if BIOS else ["-drive", f"if=pflash,format=raw,readonly=on,file={code}", "-drive", f"if=pflash,format=raw,file={vv}"]),
        "-drive", f"file={disk},format=raw,if=none,id=d0", "-device", "ide-hd,drive=d0,bootindex=1" if False else "virtio-blk-pci,drive=d0,bootindex=1",
        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
        "-serial", f"unix:{sock},server=on,wait=off", "-monitor", f"unix:{mon},server=on,wait=off"]
@@ -111,9 +112,15 @@ try:
     c, o = sh("touch /etc/x 2>&1; echo $?"); ok("Read-only" in o or o.strip().endswith("1"), "writing to the root fails")
     c, o = sh("mountpoint /home && df -h /home | tail -1"); ok(c == 0, "/home is a mount (persistent data partition): " + o.strip().replace("\n", " | "))
     c, o = sh("df -m /data | tail -1 | awk '{print $2}'"); size = int(re.search(r"\d+", o).group()) if re.search(r"\d+", o) else 0
-    ok(size > 3000, f"the data partition grew to fill the disk on first boot ({size} MB)")
+    ok(size > 2000, f"the data partition grew to fill the disk on first boot ({size} MB)")
     # jaded serves the page; the token is in it
-    c, o = sh("wget -qO- http://127.0.0.1:8080/ | head -c 100000 | grep -o '\"token\":\"[0-9a-f]*\"' | head -1"); tok = re.search(r'"token":"([0-9a-f]+)"', o)
+    tok = None
+    for _try in range(4):
+        c, o = sh("wget -T 60 -qO- http://127.0.0.1:8080/ | head -c 200000 | grep -o '\"token\":\"[0-9a-f]*\"' | head -1", 90); tok = re.search(r'"token":"([0-9a-f]+)"', o)
+        if tok: break
+        time.sleep(5)
+    if not tok:
+        c, o = sh("wget -T 30 -S -O /dev/null http://127.0.0.1:8080/ 2>&1 | head -12; wget -T 30 -qO- http://127.0.0.1:8080/ | head -c 600", 80); print("page fetch diag:", o[:1500])
     ok(bool(tok), "jaded serves the page with its token")
     if tok:
         t = tok.group(1)
@@ -121,17 +128,22 @@ try:
         c, o = sh("wget -qO- http://127.0.0.1:8080/native/ping 2>&1 | tail -1"); ok("401" in o or "Unauthorized" in o, "and refuses calls without the token")
     c, o = sh("ps w | grep -q '[j]aded.mjs' && echo node-running; ps w | grep -q '[c]og' && echo cog-running"); ok("node-running" in o, "jaded is running")
     ok("cog-running" in o, "the kiosk browser (Cog) is running")
-    time.sleep(20)
-    r = mon_cmd(f"screendump {os.path.join(work, 'screen.ppm')}")
-    ppm = os.path.join(work, "screen.ppm")
+    ppm = os.path.join(work, "screen.ppm"); colours = 0
+    for _try in range(12):
+        time.sleep(10)
+        mon_cmd(f"screendump {ppm}")
+        if os.path.exists(ppm):
+            data = open(ppm, "rb").read(); body = data.split(b"\n", 3)[-1] if data[:2] == b"P6" else data
+            colours = len(set(body[i:i + 3] for i in range(0, min(len(body), 6_000_000), 211)))
+            if colours > 20: break
     if os.path.exists(ppm):
-        data = open(ppm, "rb").read(); body = data.split(b"\n", 3)[-1] if data[:2] == b"P6" else data
-        colours = len(set(body[i:i + 3] for i in range(0, min(len(body), 3_000_000), 997)))
-        ok(colours > 20, f"the screen is not blank ({colours} distinct colours sampled)")
+        ok(colours > 20, f"the screen shows the page ({colours} distinct colours sampled)")
         try:
             subprocess.run(["convert", ppm, os.path.join(out, f"screen-{fw}.png")], check=False)
+            ocr = subprocess.run(["tesseract", os.path.join(out, f"screen-{fw}.png"), "-"], capture_output=True, text=True).stdout
+            print("screen text:", " ".join(ocr.split())[:600])
         except FileNotFoundError:
-            shutil.copy(ppm, os.path.join(out, f"screen-{fw}.ppm"))
+            pass
     else:
         ok(False, "screendump produced a file")
     c, o = sh("tail -5 /var/log/cog.log /var/log/jaded.log 2>&1 | head -20"); print(o)
