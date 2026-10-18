@@ -113,6 +113,12 @@ try:
     c, o = sh("mountpoint /home && df -h /home | tail -1"); ok(c == 0, "/home is a mount (persistent data partition): " + o.strip().replace("\n", " | "))
     c, o = sh("df -m /data | tail -1 | awk '{print $2}'"); size = int(re.search(r"\d+", o).group()) if re.search(r"\d+", o) else 0
     ok(size > 2000, f"the data partition grew to fill the disk on first boot ({size} MB)")
+    for _t in range(10):
+        c, o = sh("ifconfig | grep -E 'inet addr:10\\.' | head -1")
+        if "10.0.2." in o: break
+        time.sleep(3)
+    ok("10.0.2." in o, "wired network: DHCP gave the machine an address: " + o.strip())
+    c, o = sh("ping -c 2 -W 3 10.0.2.2 >/dev/null 2>&1 && echo reachable"); ok("reachable" in o, "and the gateway answers")
     # jaded serves the page; the token is in it
     tok = None
     for _try in range(4):
