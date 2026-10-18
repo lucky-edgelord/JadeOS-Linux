@@ -1,1 +1,2 @@
 source "$BR2_EXTERNAL_JADEOS_PATH/package/jadeos/Config.in"
+source "$BR2_EXTERNAL_JADEOS_PATH/package/jflite/Config.in"

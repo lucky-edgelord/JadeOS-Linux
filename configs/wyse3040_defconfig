@@ -22,12 +22,12 @@ BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 # the real tools: BusyBox with all its applets, node, micropython, sqlite3
 BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
 BR2_PACKAGE_NODEJS=y
-# speech: ALSA for the sound card, Flite as the small fallback voice (Kokoro, the main one, is added by tools/fetch_kokoro.sh)
+# speech: ALSA for the sound card, Flite (as the separate jflite package, see its Config.in) as the small fallback voice (Kokoro, the main one, is added by tools/fetch_kokoro.sh)
 BR2_PACKAGE_ALSA_UTILS=y
 BR2_PACKAGE_ALSA_UTILS_ALSACTL=y
 BR2_PACKAGE_ALSA_UTILS_AMIXER=y
 BR2_PACKAGE_ALSA_UTILS_APLAY=y
-BR2_PACKAGE_FLITE=y
+BR2_PACKAGE_JFLITE=y
 BR2_PACKAGE_MICROPYTHON=y
 BR2_PACKAGE_MICROPYTHON_LIB=y
 BR2_PACKAGE_SQLITE=y

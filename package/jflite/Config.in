@@ -1,0 +1,6 @@
+config BR2_PACKAGE_JFLITE
+	bool "flite (for jaded's speech fallback)"
+	depends on BR2_USE_WCHAR
+	help
+	  Flite, the small CMU speech synthesiser, built as a separate package from Buildroot's own `flite` so that
+	  WPE WebKit does not switch on its (unbuildable without multimedia) speech synthesis support when it sees it.
