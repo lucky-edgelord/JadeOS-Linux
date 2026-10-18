@@ -5,7 +5,9 @@ name: ci
 #    with 32-bit and 64-bit UEFI firmware, then published as an artifact (and a release on tags / manual runs)
 on:
   push:
+    paths-ignore: ['docs/**', '**.md']
   pull_request:
+    paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
     inputs:
       release:
