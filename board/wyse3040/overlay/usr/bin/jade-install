@@ -35,6 +35,17 @@ ginfo() { sgdisk -i "$2" "$1" 2>/dev/null | sed -n "s/^$3: *\([^ ]*\).*/\1/p"; }
 make_nodes() { partx -a "$1" 2>/dev/null || partx -u "$1" 2>/dev/null; return 0; }
 [ -n "$JADE_INSTALL_HOOK" ] && . "$JADE_INSTALL_HOOK"
 
+# the disk whose 2nd partition has this PARTUUID (the stick we booted from; busybox blkid does not show PARTUUID)
+find_src() {
+  for d in $SYSB/*; do
+    n=${d##*/}
+    case "$n" in loop*|ram*|sr*|zram*|fd*|md*|dm-*|nbd*) continue ;; esac
+    [ -b "/dev/$n" ] || continue
+    g=$(ginfo "/dev/$n" 2 "Partition unique GUID" | tr 'A-F' 'a-f')
+    [ "$g" = "$1" ] && { echo "/dev/$n"; return; }
+  done
+}
+
 # disks other than the stick: "name|GB|model|removable"
 list_targets() {
   for d in $SYSB/*; do
@@ -88,13 +99,12 @@ step() {   # "text" function
 : >"$LOG"
 if [ -z "$SRC" ]; then
   [ -t 1 ] && { clr; echo; say "Starting the JadeOS installer..."; }
-  PU=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
-  i=0; SP=
-  while [ -z "$SP" ] && [ $i -lt 60 ]; do   # the drives may still be settling
-    SP=$(blkid 2>/dev/null | grep -i "PARTUUID=\"$PU\"" | head -n1 | cut -d: -f1)
-    [ -n "$SP" ] || { sleep 1; i=$((i + 1)); }
+  PU=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline | tr 'A-F' 'a-f')
+  i=0
+  while [ -z "$SRC" ] && [ $i -lt 60 ]; do   # the drives may still be settling
+    SRC=$(find_src "$PU")
+    [ -n "$SRC" ] || { sleep 1; i=$((i + 1)); }
   done
-  [ -n "$SP" ] && SRC=$(disk_of "$SP")
 fi
 [ -b "$SRC" ] || fail "I could not tell which disk I am running from."
 SRC_PU=$(ginfo "$SRC" 2 "Partition unique GUID")
