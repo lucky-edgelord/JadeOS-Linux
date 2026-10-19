@@ -3,7 +3,17 @@
 # /data/home onto /home. If there is no data partition (or it will not mount) /home is RAM and nothing is saved.
 case "$1" in
   start)
-    DEV=$(findfs LABEL=jadedata 2>/dev/null)
+    # prefer the data partition on the disk we booted from (a second JadeOS disk or stick may be plugged in)
+    DEV=; RP=; RDEV=$(mountpoint -d / 2>/dev/null)
+    for f in /sys/class/block/*/dev; do [ "$(cat "$f")" = "$RDEV" ] && RP=$(basename "$(dirname "$f")") && break; done
+    if [ -n "$RP" ]; then
+      RD=$(basename "$(dirname "$(readlink -f /sys/class/block/$RP)")")
+      for p in /sys/block/$RD/$RD*; do
+        n=${p##*/}; [ -b "/dev/$n" ] || continue
+        [ "$(dd if=/dev/$n bs=1 skip=1144 count=8 2>/dev/null)" = "jadedata" ] && DEV=/dev/$n && break
+      done
+    fi
+    [ -n "$DEV" ] || DEV=$(findfs LABEL=jadedata 2>/dev/null)
     [ -n "$DEV" ] || DEV=$(blkid 2>/dev/null | sed -n 's|^\(/dev/[^:]*\):.*LABEL="jadedata".*|\1|p' | head -n1)
     if [ -z "$DEV" ]; then   # last resort: read the ext4 label straight from the superblock
       for sys in /sys/class/block/*/partition; do

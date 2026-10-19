@@ -211,6 +211,8 @@ echo; clr; bar "All done"
 say "JadeOS is installed on the $GB GB drive ($MODEL)."; echo
 say "  1.  Unplug the USB stick."
 say "  2.  Press ENTER. The computer restarts into JadeOS."; echo
+say "If it does not start by itself, restart, press F12 and pick the"
+say "UEFI entry for this drive (not the USB stick)."; echo
 if [ -t 0 ] && [ "$YES" != 1 ]; then ask "> "; fi
 [ "$REBOOT" = 1 ] && { sync; reboot -f; }
 exit 0

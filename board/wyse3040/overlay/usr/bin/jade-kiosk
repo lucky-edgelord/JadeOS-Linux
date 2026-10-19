@@ -1,10 +1,26 @@
 #!/bin/sh
-# keep Cog running full screen on the first display, restarting it if it ever exits
+# keep Cog running full screen on the first display, restarting it if it ever exits.
+# The screen says what is happening while it starts; if the graphics keep failing it retries in software
+# rendering, and after that points to the console on screen 2.
 export XDG_RUNTIME_DIR=/run/cog HOME=/tmp/cog
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME"; chmod 700 "$XDG_RUNTIME_DIR"
+msg() { printf '\033[2J\033[H\n  %s\n' "$@" >/dev/tty1 2>/dev/null; }
+msg "Starting JadeOS... (this can take a minute)"
 for i in $(seq 1 60); do [ -e /dev/dri/card0 ] && break; sleep 1; done
-for i in $(seq 1 60); do wget -q -O /dev/null http://127.0.0.1:8080/favicon.ico && break; sleep 1; done
+for i in $(seq 1 90); do wget -q -O /dev/null http://127.0.0.1:8080/favicon.ico && break; sleep 1; done
+fails=0
 while :; do
+  t0=$(date +%s)
+  echo "--- cog start $(date) fails=$fails sw=${LIBGL_ALWAYS_SOFTWARE:-0}" >>/var/log/cog.log
   cog --platform=drm "${JADE_URL:-http://127.0.0.1:8080/}" >>/var/log/cog.log 2>&1
-  sleep 2
+  if [ $(( $(date +%s) - t0 )) -lt 30 ]; then fails=$((fails + 1)); else fails=0; fi
+  [ $fails -ge 2 ] && export LIBGL_ALWAYS_SOFTWARE=1      # the GPU driver is not working: draw in software
+  if [ $fails -ge 4 ]; then
+    msg "The JadeOS screen could not start on this display." "" \
+        "Press Alt+F2 for a console (log in as root, no password)." \
+        "The details are in /var/log/cog.log. Retrying in 30 seconds..."
+    sleep 30
+  else
+    sleep 2
+  fi
 done
