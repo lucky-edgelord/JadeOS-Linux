@@ -16,6 +16,8 @@ any ordinary 64-bit UEFI x86 box such as the **Dell OptiPlex 3020 Micro**.
 - **Jade's own commands** (`jade`, `flow`, `crontab`, `search`, `tags`, …) work from that shell too.
 - **Screen.** WPE WebKit (Cog) straight on KMS/DRM, WebGL from Mesa (Intel GPU drivers, software fallback in VMs), so the
   Live2D avatar runs on the GPU.
+- **Speech.** `speechSynthesis` works in the page, backed by the machine: **Kokoro-82M** (offline, natural voices) with
+  **Flite** as a fast fallback, played through ALSA (`/tts/*` on jaded). HDMI, onboard and USB audio are supported.
 - **Appliance basics.** Read-only root, a data partition that grows to fill the disk on first boot, wired networking on
   any port, USB Wi-Fi with `jade-wifi SSID PASSWORD`.
 

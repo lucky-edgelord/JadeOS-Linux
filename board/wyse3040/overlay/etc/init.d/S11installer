@@ -1,0 +1,10 @@
+#!/bin/sh
+# Boot entry "Install JadeOS": run the installer on the screen instead of the desktop.
+# (Not start-stop-daemon: with -x /bin/sh it sees this very script, also a /bin/sh, as "already running" and does nothing.)
+case "$1" in
+  start)
+    grep -q 'jade.install=1' /proc/cmdline || exit 0
+    dmesg -n 1   # keep kernel messages off the installer screen
+    ( setsid /usr/bin/jade-install </dev/tty1 >/dev/tty1 2>&1 & )
+    ;;
+esac

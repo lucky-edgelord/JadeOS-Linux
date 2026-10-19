@@ -1,0 +1,206 @@
+#!/bin/sh
+# jade-install: put JadeOS from this USB stick onto the computer's internal drive.
+# Full screen and step by step: it finds the drive, says exactly what it will erase, asks for one "YES", does the rest,
+# and tells you when to unplug the stick. Nothing is changed before the YES.
+#
+# For tests and automation:  jade-install --target /dev/sdb [--source /dev/sda] --yes [--no-reboot] [--no-kiosk]
+# JADE_INSTALL_HOOK=file is sourced after the functions below (a test may redefine make_nodes there).
+
+LOG=/tmp/jade-install.log
+SYSB=${JADE_SYSBLOCK:-/sys/block}   # (a test points this at a fake tree)
+TARGET=; SRC=; YES=0; REBOOT=1; KIOSK=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target) TARGET=$2; shift ;;
+    --source) SRC=$2; shift ;;
+    --yes) YES=1 ;;
+    --no-reboot) REBOOT=0 ;;
+    --no-kiosk) KIOSK=0 ;;
+    *) echo "usage: jade-install [--target DISK --yes] [--source DISK] [--no-reboot] [--no-kiosk]"; exit 2 ;;
+  esac
+  shift
+done
+
+ESC=$(printf '\033')
+clr() { [ -t 1 ] && printf '%s[2J%s[H' "$ESC" "$ESC"; }
+bar() { printf '%s[1;30;47m  %-60s%s[0m\n\n' "$ESC" "$1" "$ESC"; }
+say() { printf '  %s\n' "$*"; }
+ask() { printf '  %s' "$1"; ANS=; read -r ANS || ANS=; }
+
+disk_of() { case "$1" in *mmcblk*|*nvme*|*loop*) echo "${1%p[0-9]*}" ;; *) echo "${1%%[0-9]*}" ;; esac; }
+part_of() { case "$1" in *mmcblk*|*nvme*|*loop*[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }
+ginfo() { sgdisk -i "$2" "$1" 2>/dev/null | sed -n "s/^$3: *\([^ ]*\).*/\1/p"; }   # DISK PART FIELD
+
+# the partition nodes may need a nudge after the table is written
+make_nodes() { partx -a "$1" 2>/dev/null || partx -u "$1" 2>/dev/null; return 0; }
+[ -n "$JADE_INSTALL_HOOK" ] && . "$JADE_INSTALL_HOOK"
+
+# disks other than the stick: "name|GB|model|removable"
+list_targets() {
+  for d in $SYSB/*; do
+    n=${d##*/}
+    case "$n" in loop*|ram*|sr*|zram*|fd*|md*|dm-*|nbd*) continue ;; esac
+    [ "/dev/$n" = "$SRC" ] && continue
+    [ "$(cat $d/ro 2>/dev/null)" = 1 ] && continue
+    sz=$(cat $d/size 2>/dev/null); [ "${sz:-0}" -ge 7000000 ] || continue      # at least ~3.6 GB
+    model=$(cat $d/device/model 2>/dev/null | tr -s ' ' | sed 's/ *$//')
+    echo "$n|$((sz / 1953125))|${model:-disk}|$(cat $d/removable 2>/dev/null)"
+  done | sort -t'|' -k4,4 -k1,1
+}
+# what is on a disk now, in words
+contents() {
+  out=
+  for p in $SYSB/$1/$1*; do
+    [ -d "$p" ] || continue; pn=${p##*/}
+    info=$(blkid /dev/$pn 2>/dev/null)
+    t=$(echo "$info" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'); l=$(echo "$info" | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p')
+    case "$t:$l" in
+      *:jadedata) w="JadeOS" ;; ntfs:*) w="Windows (NTFS)${l:+ \"$l\"}" ;; "") continue ;; *) w="$t${l:+ \"$l\"}" ;;
+    esac
+    case "$out" in *"$w"*) ;; *) out="$out${out:+, }$w" ;; esac
+  done
+  echo "${out:-nothing recognisable (empty, or unknown format)}"
+}
+
+start_desktop() {
+  [ "$KIOSK" = 1 ] || return 0
+  touch /run/jade-force-kiosk; /etc/init.d/S90kiosk start >/dev/null 2>&1
+}
+
+fail() {
+  echo; say "Something went wrong: $1"; echo
+  say "Your USB stick has not been changed. Details are in $LOG."
+  [ -t 0 ] && { echo; ask "Press ENTER to restart the computer. "; }
+  [ "$REBOOT" = 1 ] && { sync; reboot -f; }
+  exit 1
+}
+
+# run a function with a "working" indicator; stop at the first failure
+step() {   # "text" function
+  printf '  %-52s' "$1"
+  ( "$2" ) >>"$LOG" 2>&1 &
+  pid=$!
+  while kill -0 $pid 2>/dev/null; do printf '.'; sleep 2; done
+  if wait $pid; then printf ' done\n'; else printf ' FAILED\n'; fail "$1 did not work."; fi
+}
+
+# ---- what to install from and onto -----------------------------------------------------------------------------
+: >"$LOG"
+if [ -z "$SRC" ]; then
+  [ -t 1 ] && { clr; echo; say "Starting the JadeOS installer..."; }
+  PU=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+  i=0; SP=
+  while [ -z "$SP" ] && [ $i -lt 60 ]; do   # the drives may still be settling
+    SP=$(blkid 2>/dev/null | grep -i "PARTUUID=\"$PU\"" | head -n1 | cut -d: -f1)
+    [ -n "$SP" ] || { sleep 1; i=$((i + 1)); }
+  done
+  [ -n "$SP" ] && SRC=$(disk_of "$SP")
+fi
+[ -b "$SRC" ] || fail "I could not tell which disk I am running from."
+SRC_PU=$(ginfo "$SRC" 2 "Partition unique GUID")
+
+TARGETS=$(list_targets)
+if [ -n "$TARGET" ]; then
+  T=${TARGET#/dev/}
+  [ -b "/dev/$T" ] && [ "/dev/$T" != "$SRC" ] || fail "$TARGET is not a usable disk."
+  TLINE=$(echo "$TARGETS" | grep "^$T|")
+  [ -n "$TLINE" ] || TLINE="$T|?|disk|"
+else
+  clr; bar "JadeOS installer"
+  NT=$(echo "$TARGETS" | grep -c .)
+  if [ "$NT" = 0 ]; then
+    say "I could not find a drive to install onto."; echo
+    say "The computer needs an internal drive (hard disk, SSD or NVMe) of at least 4 GB."
+    say "If it has one, it may be hidden by a BIOS setting (SATA mode: choose AHCI, not RAID)."; echo
+    ask "Press ENTER to start JadeOS from the USB stick without installing. "
+    start_desktop; exit 0
+  fi
+  say "Welcome. This puts JadeOS on this computer so it starts by itself,"
+  say "without the USB stick."; echo
+  if [ "$NT" = 1 ]; then
+    TLINE=$TARGETS
+  else
+    say "I found $NT drives. Which one should JadeOS go on?"; echo
+    i=1
+    echo "$TARGETS" | while IFS='|' read -r n gb m rm; do
+      printf '    %s)  %s GB  %s  (%s)   holds: %s\n' "$i" "$gb" "$m" "$([ "$rm" = 0 ] && echo internal || echo external)" "$(contents $n)"; i=$((i + 1))
+    done
+    echo; ask "Type the number, or just press ENTER to cancel: "
+    case "$ANS" in ''|*[!0-9]*) TLINE= ;; *) TLINE=$(echo "$TARGETS" | sed -n "${ANS}p") ;; esac
+    if [ -z "$TLINE" ]; then
+      echo; say "Nothing was changed."; ask "Press ENTER to start JadeOS from the USB stick. "; start_desktop; exit 0
+    fi
+    clr; bar "JadeOS installer"
+  fi
+fi
+T=$(echo "$TLINE" | cut -d'|' -f1); GB=$(echo "$TLINE" | cut -d'|' -f2); MODEL=$(echo "$TLINE" | cut -d'|' -f3)
+DST=/dev/$T
+
+if [ "$YES" != 1 ]; then
+  say "Install JadeOS on this drive:"; echo
+  printf '      %s%s GB  %s%s\n' "$ESC[1m" "$GB" "$MODEL" "$ESC[0m"
+  say "    (currently holds: $(contents $T))"; echo
+  printf '  %s[1;31m  EVERYTHING ON THAT DRIVE WILL BE ERASED.%s[0m\n\n' "$ESC" "$ESC"
+  say "To go ahead, type  YES  and press ENTER."
+  say "To leave everything as it is, just press ENTER."; echo
+  ask "> "
+  case "$ANS" in YES|yes|Yes) ;; *)
+    echo; say "Nothing was changed."; ask "Press ENTER to start JadeOS from the USB stick. "; start_desktop; exit 0 ;;
+  esac
+  clr; bar "Installing JadeOS - please do not unplug anything"
+fi
+
+# ---- the work ---------------------------------------------------------------------------------------------------
+S1=$(ginfo "$SRC" 1 "First sector"); E1=$(ginfo "$SRC" 1 "Last sector")
+S2=$(ginfo "$SRC" 2 "First sector"); E2=$(ginfo "$SRC" 2 "Last sector")
+[ -n "$S1" ] && [ -n "$E1" ] && [ -n "$S2" ] && [ -n "$E2" ] || fail "I could not read the layout of the USB stick."
+NEWPU=$(cat /proc/sys/kernel/random/uuid)      # the copy gets its own id, so it never gets mixed up with the stick
+P1=$(part_of "$DST" 1); P2=$(part_of "$DST" 2); P3=$(part_of "$DST" 3)
+SP1=$(part_of "$SRC" 1); SP2=$(part_of "$SRC" 2)
+MT=/tmp/jt; ME=/tmp/je
+
+s_prepare() {
+  for p in $SYSB/$T/$T*; do [ -d "$p" ] && umount "/dev/${p##*/}" 2>/dev/null; done
+  sgdisk -Z "$DST"; sgdisk -o "$DST"
+  sgdisk -a 1 -n "1:$S1:$E1" -t 1:EF00 -c 1:boot "$DST"
+  sgdisk -a 1 -n "2:$S2:$E2" -t 2:44479540-f297-41b2-9af7-d131d5f0458a -u "2:$NEWPU" -c 2:root "$DST"
+  sgdisk -a 2048 -n 3:0:0 -t 3:8300 -c 3:data "$DST"
+  make_nodes "$DST"
+  i=0; while [ $i -lt 20 ]; do [ -b "$P1" ] && [ -b "$P2" ] && [ -b "$P3" ] && return 0; sleep 1; i=$((i + 1)); make_nodes "$DST"; done
+  echo "partitions did not appear"; return 1
+}
+s_boot() { dd if="$SP1" of="$P1" bs=4M && sync; }
+s_system() { dd if="$SP2" of="$P2" bs=4M && sync; }
+s_data() {
+  mke2fs -q -t ext4 -F -L jadedata "$P3" || return 1
+  mkdir -p "$MT" && mount "$P3" "$MT" || return 1
+  mkdir -p "$MT/home/jade" "$MT/etc"
+  # keep what is already on the stick: the vault, settings, saved Wi-Fi
+  [ -d /data/home ] && cp -a /data/home/. "$MT/home/"
+  [ -d /data/etc ] && cp -a /data/etc/. "$MT/etc/"
+  touch "$MT/.grown"; sync; umount "$MT"
+}
+s_boot_menu() {
+  mkdir -p "$ME" && mount -t vfat "$P1" "$ME" || return 1
+  C=$ME/EFI/BOOT/grub.cfg
+  OLD=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' "$C" | head -n1)
+  sed -i -e '/INSTALLER-BEGIN/,/INSTALLER-END/d' -e "s/$OLD/$NEWPU/g" -e 's/^set timeout=.*/set timeout=2/' "$C" || { umount "$ME"; return 1; }
+  grep -q "root=PARTUUID=$NEWPU" "$C" || { umount "$ME"; return 1; }
+  sync; umount "$ME"
+}
+
+echo
+step "1 of 5  Getting the drive ready" s_prepare
+step "2 of 5  Copying the boot files" s_boot
+step "3 of 5  Copying JadeOS (about 2 to 5 minutes)" s_system
+step "4 of 5  Making your storage area, copying your files" s_data
+step "5 of 5  Making the drive start by itself" s_boot_menu
+sync
+
+echo; clr; bar "All done"
+say "JadeOS is installed on the $GB GB drive ($MODEL)."; echo
+say "  1.  Unplug the USB stick."
+say "  2.  Press ENTER. The computer restarts into JadeOS."; echo
+if [ -t 0 ] && [ "$YES" != 1 ]; then ask "> "; fi
+[ "$REBOOT" = 1 ] && { sync; reboot -f; }
+exit 0

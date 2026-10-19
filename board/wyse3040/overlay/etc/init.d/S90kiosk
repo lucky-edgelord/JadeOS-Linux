@@ -2,7 +2,8 @@
 # the screen: Cog (WPE WebKit) on the display, showing Jade. Boot with jade.nokiosk=1 to get a console only.
 case "$1" in
   start)
-    grep -q 'jade.nokiosk=1' /proc/cmdline && { echo "kiosk: off (jade.nokiosk=1)"; exit 0; }
+    grep -q 'jade.nokiosk=1' /proc/cmdline && { echo "kiosk: off (jade.nokiosk=1)"; chvt 2 2>/dev/null; exit 0; }   # console login on the second screen
+    grep -q 'jade.install=1' /proc/cmdline && [ ! -e /run/jade-force-kiosk ] && { echo "kiosk: off (installer)"; exit 0; }
     start-stop-daemon -S -b -m -p /run/kiosk.pid -x /usr/bin/jade-kiosk
     ;;
   stop) start-stop-daemon -K -p /run/kiosk.pid; killall cog 2>/dev/null ;;
