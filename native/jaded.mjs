@@ -59,7 +59,7 @@ export function start(opt = {}) {
     fs.watch(ROOT, { recursive: true }, () => { clearTimeout(fsTimer); fsTimer = setTimeout(() => emit('fs', { t: Date.now() }), 120); });
   } catch (e) { console.error('jaded: file watching is off:', e.message); }
   const rpcWait = new Map(); let rpcSeq = 0;
-  // ---- mice: /dev/input event devices with a "mouseN" handler; relative motion, buttons, wheel -> 'ptr' events
+  // ---- mice: /dev/input event devices that are mice (a "mouseN" handler, or relative X/Y axes); relative motion, buttons, wheel -> 'ptr' events
   const mice = new Map(); let miceTimer = null;
   if (POINTER) {
     const DEVLIST = opt.inputDevices ?? process.env.JADED_INPUT_DEVICES ?? '/proc/bus/input/devices';
@@ -67,7 +67,10 @@ export function start(opt = {}) {
     const scanMice = () => {
       let txt; try { txt = fs.readFileSync(DEVLIST, 'utf8'); } catch { return; }
       for (const blk of txt.split(/\n\s*\n/)) {
-        const h = /H: Handlers=([^\n]*)/.exec(blk); if (!h || !/\bmouse\d+/.test(h[1])) continue;
+        const h = /H: Handlers=([^\n]*)/.exec(blk); if (!h) continue;
+        // a mouse: a "mouseN" handler, or (this kernel has no mousedev) relative X and Y axes: "B: REL=903"
+        const rel = /B: REL=([0-9a-f]+)\s*$/mi.exec(blk); const relXY = rel && ((parseInt(rel[1].slice(-4), 16) & 3) === 3);
+        if (!/\bmouse\d+/.test(h[1]) && !relXY) continue;
         const ev = /\bevent(\d+)/.exec(h[1]); if (!ev) continue;
         const dev = path.join(DEVDIR, 'event' + ev[1]); if (mice.has(dev)) continue;
         let st; try { st = fs.createReadStream(dev); } catch { continue; }

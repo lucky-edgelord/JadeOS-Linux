@@ -3,7 +3,7 @@ import pw from 'playwright'; import fs from 'node:fs'; import path from 'node:pa
 const { start } = await import(process.env.JADED_MJS || '../native/jaded.mjs');
 const log = [], fail = []; const ok = (c, m) => (c ? log : fail).push((c ? 'PASS ' : 'FAIL ') + m);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ptr-')); const fifo = path.join(tmp, 'event7'); execSync(`mkfifo ${fifo}`);
-fs.writeFileSync(path.join(tmp, 'devices'), 'I: Bus=0011 Vendor=0001 Product=0001\nN: Name="AT Keyboard"\nH: Handlers=sysrq kbd event3 leds\n\nI: Bus=0003 Vendor=046d Product=c077\nN: Name="Logitech USB Optical Mouse"\nH: Handlers=mouse0 event7\nB: EV=17\n\n');
+fs.writeFileSync(path.join(tmp, 'devices'), 'I: Bus=0011 Vendor=0001 Product=0001\nN: Name="AT Keyboard"\nH: Handlers=sysrq kbd event3 leds\n\nI: Bus=0003 Vendor=046d Product=c077\nN: Name="Logitech USB Optical Mouse"\nH: Handlers=event7\nB: EV=17\nB: KEY=1f0000 0 0 0 0\nB: REL=903\n\n');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ptr-ws-'));
 const d = await start({ port: 0, root, page: process.env.NATIVE_PAGE || 'build/native-page.html', token: 'pt', pointer: true, inputDevices: path.join(tmp, 'devices'), inputDir: tmp });
 const w = fs.openSync(fifo, 'w');   // opens once jaded is reading
