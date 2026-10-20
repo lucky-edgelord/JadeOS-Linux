@@ -4,4 +4,10 @@
 mkdir -p /data/etc
 { echo "ctrl_interface=/run/wpa_supplicant"; echo "update_config=0"; wpa_passphrase "$1" "$2"; } > /data/etc/wpa_supplicant.conf
 chmod 600 /data/etc/wpa_supplicant.conf
+# replace a running connection (an old password would otherwise stay in use until reboot)
+/etc/init.d/S41wifi stop; killall -q wpa_supplicant; sleep 1
+for f in /run/udhcpc.wl*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; done
 /etc/init.d/S41wifi start
+echo "Saved. Connecting to $1 ..."; sleep 8
+W=$(for d in /sys/class/net/*; do [ -d "$d/wireless" ] && echo "${d##*/}" && break; done)
+ifconfig "$W" 2>/dev/null | grep -q 'inet addr' && echo "Connected: $(ifconfig "$W" | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p')" || echo "Not connected yet. Check the name and password (Wi-Fi names are case-sensitive)."
