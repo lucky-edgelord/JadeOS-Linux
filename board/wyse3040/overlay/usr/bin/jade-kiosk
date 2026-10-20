@@ -2,7 +2,8 @@
 # keep Cog running full screen on the first display, restarting it if it ever exits.
 # The screen says what is happening while it starts; if the graphics keep failing it retries in software
 # rendering, and after that points to the console on screen 2.
-export XDG_RUNTIME_DIR=/run/cog HOME=/tmp/cog
+# HOME on the data partition: the page keeps its settings, chats and schedules in the browser storage under it
+export XDG_RUNTIME_DIR=/run/cog HOME=/data/cog
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME"; chmod 700 "$XDG_RUNTIME_DIR"
 msg() { printf '\033[2J\033[H\n  %s\n' "$@" >/dev/tty1 2>/dev/null; }
 msg "Starting JadeOS... (this can take a minute)"

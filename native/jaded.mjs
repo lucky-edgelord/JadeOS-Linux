@@ -26,6 +26,10 @@ export function start(opt = {}) {
   const PAGE = opt.page ?? process.env.JADED_PAGE ?? path.join(HERE, '..', 'dist', 'jade-vault.html');
   const TOKEN = opt.token ?? process.env.JADED_TOKEN ?? crypto.randomBytes(24).toString('hex');
   const SHELL = opt.shell ?? process.env.JADED_SHELL ?? '/bin/sh';
+  // a backup to restore on first open (settings, chats ...; its vault files are already on disk). Removed once applied.
+  const RESTORE = opt.restore ?? process.env.JADED_RESTORE ?? '';
+  let RESTORE_JS = ''; try { RESTORE_JS = fs.readFileSync(path.join(HERE, 'native_restore.js'), 'utf8'); } catch {}
+  const restorePending = () => !!(RESTORE && RESTORE_JS && fs.existsSync(RESTORE));
   fs.mkdirSync(ROOT, { recursive: true });
 
   // wrappers so the real shell can call Jade's own commands (`jade`, `flow`, ...): they relay to the page
@@ -185,7 +189,7 @@ export function start(opt = {}) {
       if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || opt.anyHost || process.env.JADED_ANY_HOST === '1' || (HOST !== '127.0.0.1' && HOST !== 'localhost'))) { res.writeHead(421, { 'Content-Length': 11, Connection: 'close' }); return res.end('misdirected'); }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
         let html; try { html = fs.readFileSync(PAGE, 'utf8'); } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('jaded: no page at ' + PAGE + ' (build it: python3 app/build.py)'); }
-        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO })};</script>` + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
+        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , restore: restorePending()})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
         if (ENGINE === 'kokoro') { try { kokoroWorker(); } catch {} }   // load the model while the page opens
         const m = /<head[^>]*>|<html[^>]*>/i.exec(html.slice(0, 4096)) || /<!doctype[^>]*>/i.exec(html.slice(0, 4096));   // only the document start: '<head>' also occurs inside scripts
         html = m ? html.slice(0, m.index + m[0].length) + boot + html.slice(m.index + m[0].length) : boot + html;
@@ -199,6 +203,14 @@ export function start(opt = {}) {
       if (p === '/native/ping') {
         return json(res, 200, { name: 'jaded', version: VERSION, root: ROOT, platform: process.platform, arch: process.arch, node: process.version, shell: SHELL,
           tts: TTS_INFO.engine, tools: { busybox: tool('busybox'), node: process.version, micropython: tool('micropython'), sqlite3: tool('sqlite3'), python3: tool('python3') }, rpc: RPC_CMDS });
+      }
+      if (p === '/native/restore' && req.method === 'GET') {
+        if (!restorePending()) return json(res, 404, { error: 'nothing to restore' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return fs.createReadStream(RESTORE).pipe(res);
+      }
+      if (p === '/native/restore/done' && req.method === 'POST') {
+        try { fs.renameSync(RESTORE, RESTORE + '.applied'); } catch {}
+        return json(res, 200, { ok: true });
       }
       if (p === '/native/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });

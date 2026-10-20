@@ -188,6 +188,7 @@ s_data() {
   # keep what is already on the stick: the vault, settings, saved Wi-Fi
   [ -d /data/home ] && cp -a /data/home/. "$MT/home/"
   [ -d /data/etc ] && cp -a /data/etc/. "$MT/etc/"
+  [ -d /data/cog ] && cp -a /data/cog "$MT/"      # the app's settings and chats, if it was already used from the stick
   touch "$MT/.grown"; sync; umount "$MT"
 }
 s_boot_menu() {
