@@ -6,7 +6,6 @@
 # on to the next way, then to software rendering, and finally points to the console on screen 2.
 # HOME on the data partition: the page keeps its settings, chats and schedules in the browser storage under it.
 export XDG_RUNTIME_DIR=/run/cog HOME=/data/cog XDG_CACHE_HOME=/data/cog/.cache MESA_SHADER_CACHE_DIR=/data/cog/.cache/mesa
-export COG_PLATFORM_DRM_CURSOR=1     # draw the mouse pointer (without it the mouse works but is invisible)
 mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$MESA_SHADER_CACHE_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
 LOG=/var/log/cog.log
 msg() { printf '\033[2J\033[H\n  %s\n' "$@" >/dev/tty1 2>/dev/null; }
@@ -34,7 +33,8 @@ while :; do
     wait $pid                                             # runs until it exits
     [ $(( $(date +%s) - t0 )) -ge 60 ] && { set -- $WAYS; sleep 2; continue; }   # ran a while: just restart it
   fi
-  wait $pid 2>/dev/null
-  echo "--- cog: '$way' did not work, trying the next way" >>$LOG
+  wait $pid 2>/dev/null; rc=$?
+  killall -q WPEWebProcess WPENetworkProcess 2>/dev/null   # leftovers would keep the screen busy for the next try
+  echo "--- cog: '$way' did not work (exit $rc), trying the next way" >>$LOG
   shift; sleep 2
 done
