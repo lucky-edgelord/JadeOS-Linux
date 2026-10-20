@@ -1,0 +1,8 @@
+#!/bin/sh
+# jade-rw on|off|status - let Jade (or you) change the system files, or lock them again. Safe mode in the boot menu is always read-only.
+case "$1" in
+  on)  mkdir -p /data/etc && touch /data/etc/rw && mount -o remount,rw / && echo "The system is writable now (and after every boot). Lock it again with: jade-rw off" ;;
+  off) rm -f /data/etc/rw; sync; mount -o remount,ro / && echo "The system is read-only again." || echo "Could not lock it right now (something is writing); it will be read-only after the next boot." ;;
+  status|"") if grep -q ' / .*[ ,(]rw[ ,)]' /proc/mounts; then echo "The system is writable."; else echo "The system is read-only."; fi; [ -f /data/etc/rw ] && echo "It will be writable at every boot (jade-rw off to change)." ;;
+  *) echo "usage: jade-rw on|off|status"; exit 2 ;;
+esac

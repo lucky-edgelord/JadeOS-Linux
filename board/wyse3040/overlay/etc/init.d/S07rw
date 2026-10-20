@@ -1,0 +1,9 @@
+#!/bin/sh
+# Optional writable system: if /data/etc/rw exists the root filesystem is remounted read-write at boot, so Jade (or you) can
+# change the system itself. The boot menu entry "safe mode" (jade.ro=1) always starts read-only. Switch with: jade-rw on | off
+case "$1" in
+  start)
+    grep -q 'jade.ro=1' /proc/cmdline && exit 0
+    [ -f /data/etc/rw ] && mount -o remount,rw / && echo "system: writable (jade-rw off to lock it)"
+    ;;
+esac
