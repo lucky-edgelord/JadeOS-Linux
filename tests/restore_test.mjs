@@ -11,7 +11,7 @@ const errs = []; page.on('pageerror', e => errs.push(e.message));
 await page.route('**/*', r => { const u = r.request().url(); return (u.startsWith(d.url.slice(0, -1)) || u.startsWith('data:') || u.startsWith('blob:')) ? r.continue() : r.abort(); });
 let loads = 0; page.on('framenavigated', f => { if (f === page.mainFrame()) loads++; });
 await page.goto(d.url);
-for (let i = 0; i < 60 && fs.existsSync(RESTORE); i++) await page.waitForTimeout(500);
+await page.waitForTimeout(8000); ok(fs.existsSync(RESTORE), 'not marked finished right after the reload'); for (let i = 0; i < 80 && fs.existsSync(RESTORE); i++) await page.waitForTimeout(500);
 ok(!fs.existsSync(RESTORE) && fs.existsSync(RESTORE + '.applied'), 'the restore ran once and was marked applied');
 await page.waitForTimeout(3000);
 await page.waitForFunction(() => typeof vfs !== 'undefined' && vfs.native && document.querySelector('#tree')?.children.length > 0, null, { timeout: 60000 });

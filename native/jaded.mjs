@@ -189,7 +189,7 @@ export function start(opt = {}) {
       if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || opt.anyHost || process.env.JADED_ANY_HOST === '1' || (HOST !== '127.0.0.1' && HOST !== 'localhost'))) { res.writeHead(421, { 'Content-Length': 11, Connection: 'close' }); return res.end('misdirected'); }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
         let html; try { html = fs.readFileSync(PAGE, 'utf8'); } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('jaded: no page at ' + PAGE + ' (build it: python3 app/build.py)'); }
-        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , restore: restorePending()})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
+        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , restore: restorePending() ? String(Math.round(fs.statSync(RESTORE).mtimeMs)) : false})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
         if (ENGINE === 'kokoro') { try { kokoroWorker(); } catch {} }   // load the model while the page opens
         const m = /<head[^>]*>|<html[^>]*>/i.exec(html.slice(0, 4096)) || /<!doctype[^>]*>/i.exec(html.slice(0, 4096));   // only the document start: '<head>' also occurs inside scripts
         html = m ? html.slice(0, m.index + m[0].length) + boot + html.slice(m.index + m[0].length) : boot + html;

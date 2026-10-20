@@ -1,27 +1,40 @@
 #!/bin/sh
 # keep Cog running full screen on the first display, restarting it if it ever exits.
-# The screen says what is happening while it starts; if the graphics keep failing it retries in software
-# rendering, and after that points to the console on screen 2.
-# HOME on the data partition: the page keeps its settings, chats and schedules in the browser storage under it
-export XDG_RUNTIME_DIR=/run/cog HOME=/data/cog
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME"; chmod 700 "$XDG_RUNTIME_DIR"
+# The screen says what is happening while it starts. Cog has two ways to draw: "gles" (copies each frame into a
+# buffer the display can show; works on older Intel GPUs such as Haswell) and "modeset" (hands the GPU's buffer to the
+# display directly; on Haswell that fails with "failed to create framebuffer"). Each try is watched; if it fails it moves
+# on to the next way, then to software rendering, and finally points to the console on screen 2.
+# HOME on the data partition: the page keeps its settings, chats and schedules in the browser storage under it.
+export XDG_RUNTIME_DIR=/run/cog HOME=/data/cog XDG_CACHE_HOME=/data/cog/.cache MESA_SHADER_CACHE_DIR=/data/cog/.cache/mesa
+export COG_PLATFORM_DRM_CURSOR=1     # draw the mouse pointer (without it the mouse works but is invisible)
+mkdir -p "$XDG_RUNTIME_DIR" "$HOME" "$MESA_SHADER_CACHE_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+LOG=/var/log/cog.log
 msg() { printf '\033[2J\033[H\n  %s\n' "$@" >/dev/tty1 2>/dev/null; }
 msg "Starting JadeOS... (this can take a minute)"
 for i in $(seq 1 60); do [ -e /dev/dri/card0 ] && break; sleep 1; done
 for i in $(seq 1 90); do wget -q -O /dev/null http://127.0.0.1:8080/favicon.ico && break; sleep 1; done
-fails=0
+# renderer[:software]   (the last one that worked is remembered on the data partition)
+WAYS="gles modeset gles:sw modeset:sw"
+[ -f /data/cog/renderer ] && WAYS="$(cat /data/cog/renderer) $WAYS"
+set -- $WAYS
 while :; do
-  t0=$(date +%s)
-  echo "--- cog start $(date) fails=$fails sw=${LIBGL_ALWAYS_SOFTWARE:-0}" >>/var/log/cog.log
-  cog --platform=drm "${JADE_URL:-http://127.0.0.1:8080/}" >>/var/log/cog.log 2>&1
-  if [ $(( $(date +%s) - t0 )) -lt 30 ]; then fails=$((fails + 1)); else fails=0; fi
-  [ $fails -ge 2 ] && export LIBGL_ALWAYS_SOFTWARE=1      # the GPU driver is not working: draw in software
-  if [ $fails -ge 4 ]; then
-    msg "The JadeOS screen could not start on this display." "" \
-        "Press Alt+F2 for a console (log in as root, no password)." \
-        "The details are in /var/log/cog.log. Retrying in 30 seconds..."
-    sleep 30
-  else
-    sleep 2
+  [ $# -gt 0 ] || { msg "The JadeOS screen could not start on this display." "" \
+      "Press Alt+F2 for a console (log in as root, no password)." "The details are in $LOG. Retrying in 30 seconds..."
+      sleep 30; set -- $WAYS; continue; }
+  way=$1; r=${way%%:*}; unset LIBGL_ALWAYS_SOFTWARE; case "$way" in *:sw) export LIBGL_ALWAYS_SOFTWARE=1 ;; esac
+  echo "--- cog start $(date) renderer=$way" >>$LOG; mark=$(wc -l <$LOG)
+  COG_PLATFORM_PARAMS="renderer=$r" cog --platform=drm "${JADE_URL:-http://127.0.0.1:8080/}" >>$LOG 2>&1 &
+  pid=$!; t0=$(date +%s); bad=0
+  while kill -0 $pid 2>/dev/null; do                     # watch the first 40 seconds of this try
+    if tail -n +$((mark + 1)) $LOG | grep -q -E 'failed to create framebuffer|Could not (initialize|create) (EGL|renderer)|Failed to initialize EGL'; then bad=1; kill $pid; break; fi
+    [ $(( $(date +%s) - t0 )) -ge 40 ] && break; sleep 2
+  done
+  if [ $bad = 0 ] && kill -0 $pid 2>/dev/null; then
+    echo "$way" > /data/cog/renderer                     # this way works here: use it first next time
+    wait $pid                                             # runs until it exits
+    [ $(( $(date +%s) - t0 )) -ge 60 ] && { set -- $WAYS; sleep 2; continue; }   # ran a while: just restart it
   fi
+  wait $pid 2>/dev/null
+  echo "--- cog: '$way' did not work, trying the next way" >>$LOG
+  shift; sleep 2
 done

@@ -4,6 +4,13 @@
 (function () {
   var J = window.__JADED__;
   if (!J || !J.restore) return;
+  var MARK = 'jvault:__restoredFrom', stamp = String(J.restore);
+  function done() {
+    var y = new XMLHttpRequest(); try { y.open('POST', '/native/restore/done', false); y.setRequestHeader('X-Jaded-Token', J.token); y.send('{}'); } catch (e) {}
+  }
+  // written on an earlier load: only mark it finished after a while, once the browser has saved it to disk
+  // (if the app is stopped before then, the restore simply runs again on the next start)
+  try { if (localStorage.getItem(MARK) === stamp) { setTimeout(done, 20000); return; } } catch (e) {}
   var x = new XMLHttpRequest();
   try { x.open('GET', '/native/restore', false); x.setRequestHeader('X-Jaded-Token', J.token); x.send(); } catch (e) { return; }
   if (x.status !== 200) return;
@@ -13,18 +20,15 @@
     localStorage.setItem('jvault:settings', JSON.stringify(d.settings || {}));
     for (var k in (d.storage || {})) localStorage.setItem('jvault:' + k, JSON.stringify(d.storage[k]));
   } catch (e) { try { console.error('restore: settings', e); } catch (_) {} }
-  function done() {
-    var y = new XMLHttpRequest(); try { y.open('POST', '/native/restore/done', false); y.setRequestHeader('X-Jaded-Token', J.token); y.send('{}'); } catch (e) {}
-    location.reload();
-  }
+  function reload() { try { localStorage.setItem(MARK, stamp); } catch (e) {} location.reload(); }
   var r = indexedDB.open('jade-vault', 1);
   r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
-  r.onerror = function () { done(); };
+  r.onerror = function () { reload(); };
   r.onsuccess = function () {
     var db = r.result, t = db.transaction('kv', 'readwrite'), st = t.objectStore('kv');
     st.clear();
     for (var k in (d.db || {})) st.put(d.db[k], k);
-    t.oncomplete = function () { db.close(); done(); };
-    t.onerror = function () { try { console.error('restore: db', t.error); } catch (_) {} db.close(); done(); };
+    t.oncomplete = function () { db.close(); reload(); };
+    t.onerror = function () { try { console.error('restore: db', t.error); } catch (_) {} db.close(); reload(); };
   };
 })();
