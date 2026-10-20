@@ -1,17 +1,23 @@
 #!/bin/sh
-# Wi-Fi from /data/etc/wpa_supplicant.conf (made by `jade-wifi SSID PASSWORD`), DHCP on wlan0
+# Wi-Fi from /data/etc/wpa_supplicant.conf (made by `jade-wifi SSID PASSWORD`), DHCP on the adapter.
+# A USB dongle can take a long time to show up (the mt7601u on the OptiPlex appears about a minute after power-on),
+# so this waits for it in the background for up to 3 minutes instead of giving up after a few seconds.
+wifi_up() {
+  W=
+  for i in $(seq 1 180); do
+    for d in /sys/class/net/*; do { [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; } && W=${d##*/} && break; done
+    [ -n "$W" ] && break; sleep 1
+  done
+  [ -n "$W" ] || { echo "wifi: no wireless adapter found"; return 0; }
+  sleep 2; ifconfig "$W" up
+  killall -q wpa_supplicant 2>/dev/null
+  wpa_supplicant -B -i "$W" -c /data/etc/wpa_supplicant.conf -P /run/wpa_supplicant.pid
+  udhcpc -b -i "$W" -p "/run/udhcpc.$W.pid" -x hostname:jadeos
+}
 case "$1" in
   start)
     [ -f /data/etc/wpa_supplicant.conf ] || exit 0
-    W=
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do   # a USB dongle can take a few seconds to show up (wlan0, wlx<mac> ...)
-      for d in /sys/class/net/*; do [ -d "$d/wireless" ] || [ -d "$d/phy80211" ] && W=${d##*/} && break; done
-      [ -n "$W" ] && break; sleep 1
-    done
-    [ -n "$W" ] || { echo "wifi: no wireless adapter found"; exit 0; }
-    ifconfig "$W" up
-    wpa_supplicant -B -i "$W" -c /data/etc/wpa_supplicant.conf -P /run/wpa_supplicant.pid
-    udhcpc -b -i "$W" -p "/run/udhcpc.$W.pid" -x hostname:jadeos
+    if [ "$2" = fg ]; then wifi_up; else ( setsid sh -c ". /etc/init.d/S41wifi; wifi_up" >/dev/null 2>&1 & ); fi
     ;;
   stop) [ -f /run/wpa_supplicant.pid ] && kill "$(cat /run/wpa_supplicant.pid)" ;;
 esac
