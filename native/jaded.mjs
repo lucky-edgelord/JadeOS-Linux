@@ -31,6 +31,7 @@ export function start(opt = {}) {
   let RESTORE_JS = ''; try { RESTORE_JS = fs.readFileSync(path.join(HERE, 'native_restore.js'), 'utf8'); } catch {}
   // the mouse, read here and passed to the page (the kiosk browser does not pass it on; see native_pointer.js)
   const POINTER = !!(opt.pointer ?? process.env.JADED_POINTER === '1');
+  let PROXY_JS = ''; try { PROXY_JS = fs.readFileSync(path.join(HERE, 'native_proxy.js'), 'utf8'); } catch {}
   let POINTER_JS = ''; try { POINTER_JS = fs.readFileSync(path.join(HERE, 'native_pointer.js'), 'utf8'); } catch {}
   const restorePending = () => !!(RESTORE && RESTORE_JS && fs.existsSync(RESTORE));
   fs.mkdirSync(ROOT, { recursive: true });
@@ -223,7 +224,7 @@ export function start(opt = {}) {
       if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || opt.anyHost || process.env.JADED_ANY_HOST === '1' || (HOST !== '127.0.0.1' && HOST !== 'localhost'))) { res.writeHead(421, { 'Content-Length': 11, Connection: 'close' }); return res.end('misdirected'); }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
         let html; try { html = fs.readFileSync(PAGE, 'utf8'); } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('jaded: no page at ' + PAGE + ' (build it: python3 app/build.py)'); }
-        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , pointer: POINTER && !!POINTER_JS, restore: restorePending() ? String(Math.round(fs.statSync(RESTORE).mtimeMs)) : false})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (POINTER && POINTER_JS ? `<script>${POINTER_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
+        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , pointer: POINTER && !!POINTER_JS, proxy: !!PROXY_JS, restore: restorePending() ? String(Math.round(fs.statSync(RESTORE).mtimeMs)) : false})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (POINTER && POINTER_JS ? `<script>${POINTER_JS}</script>` : '') + (PROXY_JS ? `<script>${PROXY_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
         if (ENGINE === 'kokoro') { try { kokoroWorker(); } catch {} }   // load the model while the page opens
         const m = /<head[^>]*>|<html[^>]*>/i.exec(html.slice(0, 4096)) || /<!doctype[^>]*>/i.exec(html.slice(0, 4096));   // only the document start: '<head>' also occurs inside scripts
         html = m ? html.slice(0, m.index + m[0].length) + boot + html.slice(m.index + m[0].length) : boot + html;
@@ -268,6 +269,20 @@ export function start(opt = {}) {
         const b = JSON.parse((await readBody(req)).toString() || '{}');
         let gone = false; res.on('close', () => { if (!res.writableEnded) { gone = true; ttsStop(); } });
         const r = await ttsSpeak(b); if (gone) return; return json(res, 200, r);
+      }
+      if (p === '/native/proxy' && req.method === 'POST') {      // the page's requests to other sites (Ollama Cloud, Groq ...) go through here, so the browser's cross-origin rules never apply
+        let u; try { u = new URL(String(req.headers['x-proxy-url'] || '')); } catch { return json(res, 400, { error: 'bad url' }); }
+        if (!/^https?:$/.test(u.protocol)) return json(res, 400, { error: 'bad url' });
+        const hdr = {}; try { Object.assign(hdr, JSON.parse(String(req.headers['x-proxy-headers'] || '{}'))); } catch {}
+        for (const k of Object.keys(hdr)) if (/^(host|origin|referer|connection|content-length|cookie|accept-encoding|sec-.*|x-jaded-token)$/i.test(k)) delete hdr[k];
+        const method = String(req.headers['x-proxy-method'] || 'GET').toUpperCase(); const body = ['GET', 'HEAD'].includes(method) ? undefined : await readBody(req);
+        const ac = new AbortController(); res.on('close', () => ac.abort());
+        try {
+          const r = await fetch(u, { method, headers: hdr, body: body && body.length ? body : undefined, signal: ac.signal, redirect: 'follow' });
+          res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type') || 'application/octet-stream', 'X-Proxy-Status-Text': encodeURIComponent(r.statusText || ''), 'Cache-Control': 'no-store' });
+          if (r.body) for await (const c of r.body) { if (!res.write(c)) await new Promise(ok => res.once('drain', ok)); }
+          return res.end();
+        } catch (e) { if (res.headersSent) return res.end(); return json(res, 502, { error: 'proxy: ' + (e.cause?.message || e.message) }); }
       }
       if (p === '/exec' && req.method === 'POST') { const b = JSON.parse((await readBody(req)).toString() || '{}'); return exec(req, res, b); }
 
