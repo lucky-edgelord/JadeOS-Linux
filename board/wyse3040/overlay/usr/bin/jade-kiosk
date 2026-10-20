@@ -13,7 +13,8 @@ msg "Starting JadeOS... (this can take a minute)"
 for i in $(seq 1 60); do [ -e /dev/dri/card0 ] && break; sleep 1; done
 for i in $(seq 1 90); do wget -q -O /dev/null http://127.0.0.1:8080/favicon.ico && break; sleep 1; done
 # renderer[:software]   (the last one that worked is remembered on the data partition)
-WAYS="gles modeset gles:sw modeset:sw"
+# "cage" runs Cog inside a tiny kiosk compositor (proper keyboard and mouse handling); the others draw straight on the display.
+WAYS="cage cage:sw gles modeset gles:sw modeset:sw"
 [ -f /data/cog/renderer ] && WAYS="$(cat /data/cog/renderer) $WAYS"
 set -- $WAYS
 while :; do
@@ -22,10 +23,17 @@ while :; do
       sleep 30; set -- $WAYS; continue; }
   way=$1; r=${way%%:*}; unset LIBGL_ALWAYS_SOFTWARE; case "$way" in *:sw) export LIBGL_ALWAYS_SOFTWARE=1 ;; esac
   echo "--- cog start $(date) renderer=$way" >>$LOG; mark=$(wc -l <$LOG)
-  COG_PLATFORM_PARAMS="renderer=$r" cog --platform=drm "${JADE_URL:-http://127.0.0.1:8080/}" >>$LOG 2>&1 &
+  URL="${JADE_URL:-http://127.0.0.1:8080/}"
+  if [ "$r" = cage ]; then
+    export LIBSEAT_BACKEND=builtin WLR_RENDERER=gles2 COG_PLATFORM_FDO_VIEW_FULLSCREEN=1 WLR_NO_HARDWARE_CURSORS=1
+    case "$way" in *:sw) export WLR_RENDERER_ALLOW_SOFTWARE=1 ;; esac
+    cage -s -- cog --platform=fdo "$URL" >>$LOG 2>&1 &
+  else
+    COG_PLATFORM_PARAMS="renderer=$r" cog --platform=drm "$URL" >>$LOG 2>&1 &
+  fi
   pid=$!; t0=$(date +%s); bad=0
   while kill -0 $pid 2>/dev/null; do                     # watch the first 40 seconds of this try
-    if tail -n +$((mark + 1)) $LOG | grep -q -E 'failed to create framebuffer|Could not (initialize|create) (EGL|renderer)|Failed to initialize EGL'; then bad=1; kill $pid; break; fi
+    if tail -n +$((mark + 1)) $LOG | grep -q -E 'failed to create framebuffer|Could not (initialize|create) (EGL|renderer)|Failed to (create|open|start)|cannot (open|start)|Failed to initialize EGL'; then bad=1; kill $pid; break; fi
     [ $(( $(date +%s) - t0 )) -ge 40 ] && break; sleep 2
   done
   if [ $bad = 0 ] && kill -0 $pid 2>/dev/null; then
@@ -34,7 +42,7 @@ while :; do
     [ $(( $(date +%s) - t0 )) -ge 60 ] && { set -- $WAYS; sleep 2; continue; }   # ran a while: just restart it
   fi
   wait $pid 2>/dev/null; rc=$?
-  killall -q WPEWebProcess WPENetworkProcess 2>/dev/null   # leftovers would keep the screen busy for the next try
+  killall -q cage WPEWebProcess WPENetworkProcess 2>/dev/null   # leftovers would keep the screen busy for the next try
   echo "--- cog: '$way' did not work (exit $rc), trying the next way" >>$LOG
   shift; sleep 2
 done
