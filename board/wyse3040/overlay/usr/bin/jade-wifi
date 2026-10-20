@@ -2,7 +2,8 @@
 # jade-wifi SSID PASSWORD  - join a Wi-Fi network (saved on the data partition, used on every boot)
 [ $# -eq 2 ] || { echo "usage: jade-wifi SSID PASSWORD"; exit 2; }
 mkdir -p /data/etc
-{ echo "ctrl_interface=/run/wpa_supplicant"; echo "update_config=0"; wpa_passphrase "$1" "$2"; } > /data/etc/wpa_supplicant.conf
+# (this build has no wpa_passphrase and no control socket, so the file is just the network block)
+printf 'network={\n  ssid="%s"\n  scan_ssid=1\n  psk="%s"\n}\n' "$1" "$2" > /data/etc/wpa_supplicant.conf
 chmod 600 /data/etc/wpa_supplicant.conf
 # replace a running connection (an old password would otherwise stay in use until reboot)
 /etc/init.d/S41wifi stop; killall -q wpa_supplicant; sleep 1
