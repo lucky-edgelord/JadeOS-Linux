@@ -29,6 +29,9 @@ export function start(opt = {}) {
   // a backup to restore on first open (settings, chats ...; its vault files are already on disk). Removed once applied.
   const RESTORE = opt.restore ?? process.env.JADED_RESTORE ?? '';
   let RESTORE_JS = ''; try { RESTORE_JS = fs.readFileSync(path.join(HERE, 'native_restore.js'), 'utf8'); } catch {}
+  // the mouse, read here and passed to the page (the kiosk browser does not pass it on; see native_pointer.js)
+  const POINTER = !!(opt.pointer ?? process.env.JADED_POINTER === '1');
+  let POINTER_JS = ''; try { POINTER_JS = fs.readFileSync(path.join(HERE, 'native_pointer.js'), 'utf8'); } catch {}
   const restorePending = () => !!(RESTORE && RESTORE_JS && fs.existsSync(RESTORE));
   fs.mkdirSync(ROOT, { recursive: true });
 
@@ -56,6 +59,34 @@ export function start(opt = {}) {
     fs.watch(ROOT, { recursive: true }, () => { clearTimeout(fsTimer); fsTimer = setTimeout(() => emit('fs', { t: Date.now() }), 120); });
   } catch (e) { console.error('jaded: file watching is off:', e.message); }
   const rpcWait = new Map(); let rpcSeq = 0;
+  // ---- mice: /dev/input event devices with a "mouseN" handler; relative motion, buttons, wheel -> 'ptr' events
+  const mice = new Map(); let miceTimer = null;
+  if (POINTER) {
+    const DEVLIST = opt.inputDevices ?? process.env.JADED_INPUT_DEVICES ?? '/proc/bus/input/devices';
+    const DEVDIR = opt.inputDir ?? process.env.JADED_INPUT_DIR ?? '/dev/input';
+    const scanMice = () => {
+      let txt; try { txt = fs.readFileSync(DEVLIST, 'utf8'); } catch { return; }
+      for (const blk of txt.split(/\n\s*\n/)) {
+        const h = /H: Handlers=([^\n]*)/.exec(blk); if (!h || !/\bmouse\d+/.test(h[1])) continue;
+        const ev = /\bevent(\d+)/.exec(h[1]); if (!ev) continue;
+        const dev = path.join(DEVDIR, 'event' + ev[1]); if (mice.has(dev)) continue;
+        let st; try { st = fs.createReadStream(dev); } catch { continue; }
+        mice.set(dev, st);
+        let buf = Buffer.alloc(0), dx = 0, dy = 0, w = 0, b = [];
+        st.on('data', d => {
+          buf = buf.length ? Buffer.concat([buf, d]) : d;
+          while (buf.length >= 24) {                       // struct input_event on 64-bit: timeval(16) type(2) code(2) value(4)
+            const type = buf.readUInt16LE(16), code = buf.readUInt16LE(18), val = buf.readInt32LE(20); buf = buf.subarray(24);
+            if (type === 2) { if (code === 0) dx += val; else if (code === 1) dy += val; else if (code === 8) w += val; }
+            else if (type === 1 && code >= 0x110 && code <= 0x112) b.push([code - 0x110, val]);
+            else if (type === 0 && code === 0 && (dx || dy || w || b.length)) { emit('ptr', { dx, dy, w, b }); dx = dy = w = 0; b = []; }
+          }
+        });
+        const gone = () => mice.delete(dev); st.on('error', gone); st.on('close', gone);
+      }
+    };
+    scanMice(); miceTimer = setInterval(scanMice, 3000); miceTimer.unref?.();
+  }
 
   // ---- helpers
   const readBody = (req, max = 256 * 1024 * 1024) => new Promise((ok, no) => {
@@ -189,7 +220,7 @@ export function start(opt = {}) {
       if (!(host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || opt.anyHost || process.env.JADED_ANY_HOST === '1' || (HOST !== '127.0.0.1' && HOST !== 'localhost'))) { res.writeHead(421, { 'Content-Length': 11, Connection: 'close' }); return res.end('misdirected'); }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
         let html; try { html = fs.readFileSync(PAGE, 'utf8'); } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('jaded: no page at ' + PAGE + ' (build it: python3 app/build.py)'); }
-        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , restore: restorePending() ? String(Math.round(fs.statSync(RESTORE).mtimeMs)) : false})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
+        const boot = `<script>window.__JADED__=${JSON.stringify({ token: TOKEN, root: ROOT, version: VERSION, shell: SHELL, tts: TTS_INFO , pointer: POINTER && !!POINTER_JS, restore: restorePending() ? String(Math.round(fs.statSync(RESTORE).mtimeMs)) : false})};</script>` + (restorePending() ? `<script>${RESTORE_JS}</script>` : '') + (POINTER && POINTER_JS ? `<script>${POINTER_JS}</script>` : '') + (TTS_JS ? `<script>${TTS_JS}</script>` : '');
         if (ENGINE === 'kokoro') { try { kokoroWorker(); } catch {} }   // load the model while the page opens
         const m = /<head[^>]*>|<html[^>]*>/i.exec(html.slice(0, 4096)) || /<!doctype[^>]*>/i.exec(html.slice(0, 4096));   // only the document start: '<head>' also occurs inside scripts
         html = m ? html.slice(0, m.index + m[0].length) + boot + html.slice(m.index + m[0].length) : boot + html;
@@ -275,7 +306,7 @@ export function start(opt = {}) {
     } catch (e) { try { json(res, 500, { error: String(e.message || e) }); } catch {} }
   });
   server.requestTimeout = 0; server.headersTimeout = 30000;
-  return new Promise((ok, no) => server.listen(PORT0, HOST, () => { const port = server.address().port; PORT = port; ok({ server, port, token: TOKEN, root: ROOT, url: `http://127.0.0.1:${port}/`, close: () => { ttsStop(); try { kw && kw.kill('SIGKILL'); } catch {} for (const c of clients) c.end(); server.closeAllConnections?.(); server.close(); try { fs.rmSync(BIN, { recursive: true }); } catch {} } }); server.on('error', no); }));
+  return new Promise((ok, no) => server.listen(PORT0, HOST, () => { const port = server.address().port; PORT = port; ok({ server, port, token: TOKEN, root: ROOT, url: `http://127.0.0.1:${port}/`, close: () => { clearInterval(miceTimer); for (const m of mice.values()) { try { m.destroy(); } catch {} } ttsStop(); try { kw && kw.kill('SIGKILL'); } catch {} for (const c of clients) c.end(); server.closeAllConnections?.(); server.close(); try { fs.rmSync(BIN, { recursive: true }); } catch {} } }); server.on('error', no); }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

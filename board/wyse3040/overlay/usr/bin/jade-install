@@ -146,7 +146,28 @@ fi
 T=$(echo "$TLINE" | cut -d'|' -f1); GB=$(echo "$TLINE" | cut -d'|' -f2); MODEL=$(echo "$TLINE" | cut -d'|' -f3)
 DST=/dev/$T
 
-if [ "$YES" != 1 ]; then
+S1=$(ginfo "$SRC" 1 "First sector"); E1=$(ginfo "$SRC" 1 "Last sector")
+S2=$(ginfo "$SRC" 2 "First sector"); E2=$(ginfo "$SRC" 2 "Last sector")
+[ -n "$S1" ] && [ -n "$E1" ] && [ -n "$S2" ] && [ -n "$E2" ] || fail "I could not read the layout of the USB stick."
+# JadeOS already on that drive, same layout: offer to update it in place and keep the data partition
+UPDATE=0; TP3=$(part_of "$DST" 3)
+if [ -b "$TP3" ] && [ "$(dd if="$TP3" bs=1 skip=1144 count=8 2>/dev/null)" = "jadedata" ] \
+   && [ "$(ginfo "$DST" 1 "First sector")" = "$S1" ] && [ "$(ginfo "$DST" 1 "Last sector")" = "$E1" ] \
+   && [ "$(ginfo "$DST" 2 "First sector")" = "$S2" ] && [ "$(ginfo "$DST" 2 "Last sector")" = "$E2" ]; then UPDATE=1; fi
+if [ "$YES" != 1 ] && [ "$UPDATE" = 1 ]; then
+  say "JadeOS is already installed on this drive:"; echo
+  printf '      %s%s GB  %s%s\n\n' "$ESC[1m" "$GB" "$MODEL" "$ESC[0m"
+  say "Type  YES    to update it. Your notes, chats, settings and Wi-Fi stay."
+  say "Type  ERASE  to wipe the drive and install fresh from this stick."
+  say "Press ENTER  to leave it as it is."; echo
+  ask "> "
+  case "$ANS" in
+    YES|yes|Yes) clr; bar "Updating JadeOS - please do not unplug anything" ;;
+    ERASE|erase|Erase) UPDATE=0; YES=1; clr; bar "Installing JadeOS - please do not unplug anything" ;;
+    *) echo; say "Nothing was changed."; ask "Press ENTER to start JadeOS from the USB stick. "; start_desktop; exit 0 ;;
+  esac
+fi
+if [ "$YES" != 1 ] && [ "$UPDATE" = 0 ]; then
   say "Install JadeOS on this drive:"; echo
   printf '      %s%s GB  %s%s\n' "$ESC[1m" "$GB" "$MODEL" "$ESC[0m"
   say "    (currently holds: $(contents $T))"; echo
@@ -161,10 +182,8 @@ if [ "$YES" != 1 ]; then
 fi
 
 # ---- the work ---------------------------------------------------------------------------------------------------
-S1=$(ginfo "$SRC" 1 "First sector"); E1=$(ginfo "$SRC" 1 "Last sector")
-S2=$(ginfo "$SRC" 2 "First sector"); E2=$(ginfo "$SRC" 2 "Last sector")
-[ -n "$S1" ] && [ -n "$E1" ] && [ -n "$S2" ] && [ -n "$E2" ] || fail "I could not read the layout of the USB stick."
 NEWPU=$(cat /proc/sys/kernel/random/uuid)      # the copy gets its own id, so it never gets mixed up with the stick
+[ "$UPDATE" = 1 ] && NEWPU=$(ginfo "$DST" 2 "Partition unique GUID" | tr 'A-F' 'a-f')   # an update keeps the drive's id
 P1=$(part_of "$DST" 1); P2=$(part_of "$DST" 2); P3=$(part_of "$DST" 3)
 SP1=$(part_of "$SRC" 1); SP2=$(part_of "$SRC" 2)
 MT=/tmp/jt; ME=/tmp/je
@@ -201,15 +220,22 @@ s_boot_menu() {
 }
 
 echo
-step "1 of 5  Getting the drive ready" s_prepare
-step "2 of 5  Copying the boot files" s_boot
-step "3 of 5  Copying JadeOS (about 2 to 5 minutes)" s_system
-step "4 of 5  Making your storage area, copying your files" s_data
-step "5 of 5  Making the drive start by itself" s_boot_menu
+if [ "$UPDATE" = 1 ]; then
+  step "1 of 3  Copying the boot files" s_boot
+  step "2 of 3  Updating JadeOS (about 2 to 5 minutes)" s_system
+  step "3 of 3  Making the drive start by itself" s_boot_menu
+else
+  step "1 of 5  Getting the drive ready" s_prepare
+  step "2 of 5  Copying the boot files" s_boot
+  step "3 of 5  Copying JadeOS (about 2 to 5 minutes)" s_system
+  step "4 of 5  Making your storage area, copying your files" s_data
+  step "5 of 5  Making the drive start by itself" s_boot_menu
+fi
 sync
 
 echo; clr; bar "All done"
-say "JadeOS is installed on the $GB GB drive ($MODEL)."; echo
+if [ "$UPDATE" = 1 ]; then say "JadeOS is updated on the $GB GB drive ($MODEL). Your files and settings were kept."
+else say "JadeOS is installed on the $GB GB drive ($MODEL)."; fi; echo
 say "  1.  Unplug the USB stick."
 say "  2.  Press ENTER. The computer restarts into JadeOS."; echo
 say "If it does not start by itself, restart, press F12 and pick the"

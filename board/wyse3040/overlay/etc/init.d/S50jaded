@@ -4,7 +4,7 @@ case "$1" in
   start)
     mkdir -p /home/jade
     HOME=/home/jade JADED_ROOT=/home/jade JADED_PAGE=/opt/jade/jade-vault.html JADED_PORT=8080 JADED_HOST=127.0.0.1 \
-      JADED_SHELL=/bin/sh JADED_RESTORE=/data/etc/jade-restore.json start-stop-daemon -S -b -m -p /run/jaded.pid -x /usr/bin/node -- /opt/jade/jaded.mjs \
+      JADED_SHELL=/bin/sh JADED_RESTORE=/data/etc/jade-restore.json JADED_POINTER=1 start-stop-daemon -S -b -m -p /run/jaded.pid -x /usr/bin/node -- /opt/jade/jaded.mjs \
       >>/var/log/jaded.log 2>&1
     echo "jaded started"
     ;;
