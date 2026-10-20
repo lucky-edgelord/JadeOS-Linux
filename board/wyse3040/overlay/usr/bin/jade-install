@@ -210,6 +210,12 @@ s_data() {
   [ -d /data/cog ] && cp -a /data/cog "$MT/"      # the app's settings and chats, if it was already used from the stick
   touch "$MT/.grown"; sync; umount "$MT"
 }
+s_wifi() {   # update only: the Wi-Fi settings on this stick replace the ones on the drive (everything else is kept)
+  [ -f /data/etc/wpa_supplicant.conf ] || return 0
+  mkdir -p "$MT" && mount "$TP3" "$MT" || return 0
+  mkdir -p "$MT/etc"; cp /data/etc/wpa_supplicant.conf "$MT/etc/wpa_supplicant.conf"; chmod 600 "$MT/etc/wpa_supplicant.conf"
+  sync; umount "$MT"; return 0
+}
 s_boot_menu() {
   mkdir -p "$ME" && mount -t vfat "$P1" "$ME" || return 1
   C=$ME/EFI/BOOT/grub.cfg
@@ -221,9 +227,10 @@ s_boot_menu() {
 
 echo
 if [ "$UPDATE" = 1 ]; then
-  step "1 of 3  Copying the boot files" s_boot
-  step "2 of 3  Updating JadeOS (about 2 to 5 minutes)" s_system
-  step "3 of 3  Making the drive start by itself" s_boot_menu
+  step "1 of 4  Copying the boot files" s_boot
+  step "2 of 4  Updating JadeOS (about 2 to 5 minutes)" s_system
+  step "3 of 4  Applying the Wi-Fi settings" s_wifi
+  step "4 of 4  Making the drive start by itself" s_boot_menu
 else
   step "1 of 5  Getting the drive ready" s_prepare
   step "2 of 5  Copying the boot files" s_boot

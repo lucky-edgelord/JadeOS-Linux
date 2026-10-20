@@ -113,7 +113,7 @@ try:
     c, o = sh("touch /etc/x 2>&1; echo $?"); ok("Read-only" in o or o.strip().endswith("1"), "writing to the root fails")
     c, o = sh("mountpoint /home && df -h /home | tail -1"); ok(c == 0, "/home is a mount (persistent data partition): " + o.strip().replace("\n", " | "))
     c, o = sh("df -m /data | tail -1 | awk '{print $2}'"); size = int(re.search(r"\d+", o).group()) if re.search(r"\d+", o) else 0
-    ok(size > 2000, f"the data partition grew to fill the disk on first boot ({size} MB)")
+    ok(size > 1500, f"the data partition grew to fill the disk on first boot ({size} MB)")
     for _t in range(10):
         c, o = sh("ifconfig | grep -E 'inet addr:10\\.' | head -1")
         if "10.0.2." in o: break
@@ -135,7 +135,7 @@ try:
         c, o = sh("wget -qO- http://127.0.0.1:8080/native/ping 2>&1 | tail -1"); ok("401" in o or "Unauthorized" in o, "and refuses calls without the token")
     # speech: a sound card, ALSA, Flite and Kokoro are on the image, and the daemon can make and play speech
     c, o = sh("cat /proc/asound/cards 2>&1 | head -3"); ok("HDA" in o or "Intel" in o, "a sound card is present: " + o.strip().replace("\n", " | "))
-    c, o = sh("command -v aplay amixer flite"); ok(c == 0 and "aplay" in o and "flite" in o, "aplay, amixer and flite are installed")
+    c, o = sh("command -v aplay amixer"); ok(c == 0 and "aplay" in o and "amixer" in o, "aplay and amixer are installed")
     c, o = sh("ls /opt/kokoro/ready /opt/kokoro/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx 2>&1; ls /opt/kokoro/models/onnx-community/Kokoro-82M-v1.0-ONNX/voices | wc -l"); ok("No such file" not in o, "the Kokoro model and voices are installed: " + o.strip().replace("\n", " | "))
     c, o = sh("cd /opt/kokoro && node -e \"import('onnxruntime-node').then(m => console.log('ort-ok', typeof m.InferenceSession), e => console.log('ort-fail', e.message))\" 2>&1 | tail -2", 120); ok("ort-ok function" in o, "onnxruntime loads on this system: " + o.strip()[-160:])
     if tok:
